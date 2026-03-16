@@ -18,7 +18,7 @@
         <main class="flex-1 flex flex-col min-w-0 bg-white rounded-[24px] shadow-sm overflow-hidden relative h-full">
           <!-- 消息显示列表：直接作为 flex 子元素，并强制 w-full 和 overflow-hidden -->
           <div class="flex-1 min-h-0 min-w-0 overflow-hidden relative">
-            <MessageList :messages="messages" :loading="isLoading" />
+            <MessageList :messages="messages" :loading="loading" />
           </div>
 
           <!-- 底部操作区容器：固定白色背景，shrink-0 确保不被压缩，移除边框 -->
@@ -26,7 +26,7 @@
             <!-- 技能切换栏 -->
             <SkillBar />
             <!-- 用户输入区域 -->
-            <ChatInput @send="onSendMessage" @stop="onStopResponse" :loading="isLoading" />
+            <ChatInput @send="onSendMessage" @stop="onStopResponse" :loading="loading" />
           </div>
         </main>
 
@@ -93,76 +93,29 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { onMounted } from 'vue';
+import { storeToRefs } from 'pinia';
 import { Info, Sparkles } from 'lucide-vue-next';
+import { useChatStore } from '../stores/chatStore';
 import ChatSidebar from '../components/ChatSidebar.vue';
 import ChatHeader from '../components/ChatHeader.vue';
 import MessageList from '../components/MessageList.vue';
 import SkillBar from '../components/SkillBar.vue';
 import ChatInput from '../components/ChatInput.vue';
 
-/**
- * 页面全局状态管理
- */
-const isLoading = ref(false);
-const currentTimer = ref(null);
-const wasInterrupted = ref(false); // 记录是否刚刚手动终止了输出
+const chatStore = useChatStore();
+const { messages, loading, currentModel } = storeToRefs(chatStore);
 
-const messages = ref([
-  {
-    role: 'ai',
-    model: 'GPT-4 Turbo',
-    content: '你好！我是 ModelHub AI。我已经根据您的要求，将所有的黑色硬边框替换为了自然的冷色调色块区分。',
-    thinking: '用户要求移除边框并使用统一的冷色调色块。我已将侧边栏设为浅冷灰，中间对话区保持纯白，整体大背景使用了深一点的冷灰色以拉开层级。'
-  },
-  {
-    role: 'user',
-    content: '现在的界面看起来非常现代且统一。侧边栏的颜色和中间区分得很清楚。'
-  },
-  {
-    role: 'ai',
-    model: 'GPT-4 Turbo',
-    content: '是的！通过移除 1px 的边框并改用背景色深浅对比（Slate 50/100/200 系列），界面显得更加柔和且专业。侧边栏与中间对话区形成了鲜明的色块对比，同时保持了视觉风格的一致性。',
-    sources: ['Modern UI Design Principles', 'Color Block Theory'],
-    streaming: false
-  }
-]);
+onMounted(() => {
+  chatStore.initialize();
+});
 
 const onSendMessage = (text) => {
-  messages.value.push({
-    role: 'user',
-    content: text,
-    isFirstAfterStop: wasInterrupted.value // 标记这是在停止后的第一条消息
-  });
-  
-  // 发送后重置中断状态
-  wasInterrupted.value = false;
-  isLoading.value = true;
-  
-  // 记录定时器，以便能够取消
-  currentTimer.value = setTimeout(() => {
-    isLoading.value = false;
-    currentTimer.value = null;
-    messages.value.push({
-      role: 'ai',
-      model: 'GPT-4 Turbo',
-      content: '收到您的消息。界面优化后，阅读和交互体验是否感觉更加流畅了？',
-      thinking: '继续保持专业且温和的语气进行互动。'
-    });
-  }, 2000);
+  chatStore.sendMessage(text);
 };
 
-/**
- * 处理停止响应逻辑
- */
 const onStopResponse = () => {
-  if (currentTimer.value) {
-    clearTimeout(currentTimer.value);
-    currentTimer.value = null;
-    wasInterrupted.value = true; // 记录发生了一次手动终止
-  }
-  isLoading.value = false;
-  // 这里可以添加实际停止 API 请求的逻辑
+  chatStore.stopGenerating();
 };
 </script>
 

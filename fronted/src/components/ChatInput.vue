@@ -56,7 +56,7 @@
                 style="border-radius: 10px !important; background-color: #e0e7ff !important; opacity: 1 !important;"
               >
                 <Cpu :size="14" />
-                <span>{{ selectedModel }}</span>
+                <span>{{ currentModel }}</span>
                 <ChevronUp :size="14" :class="showModelMenu ? 'rotate-180' : ''" class="transition-transform" />
               </button>
               
@@ -67,7 +67,7 @@
                   :key="model.name"
                   @click="selectModel(model.name)"
                   class="w-full text-left px-4 py-2.5 text-[12px] font-bold cursor-pointer transition-colors"
-                  :class="selectedModel === model.name ? 'bg-primary/10 text-primary' : 'text-text-secondary hover:bg-gray-50'"
+                  :class="currentModel === model.name ? 'bg-primary/10 text-primary' : 'text-text-secondary hover:bg-gray-50'"
                 >
                   {{ model.name }}
                 </div>
@@ -105,15 +105,12 @@
 
 <script setup>
 import { Paperclip, Send, Smile, Cpu, ChevronUp, Square } from 'lucide-vue-next';
-import { ref, defineEmits, defineProps } from 'vue';
+import { ref, defineEmits } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useChatStore } from '../stores/chatStore';
 
-// 编译器宏
-const props = defineProps({
-  loading: {
-    type: Boolean,
-    default: false
-  }
-});
+const chatStore = useChatStore();
+const { loading, currentModel } = storeToRefs(chatStore);
 
 // 输入内容响应式变量
 const input = ref('');
@@ -122,7 +119,6 @@ const textareaRef = ref(null);
 
 // 模型选择状态
 const showModelMenu = ref(false);
-const selectedModel = ref('GPT-4 Turbo');
 const models = ref([
   { name: 'GPT-4 Turbo' },
   { name: 'Claude 3.5 Sonnet' },
@@ -130,7 +126,7 @@ const models = ref([
 ]);
 
 const selectModel = (name) => {
-  selectedModel.value = name;
+  currentModel.value = name;
   showModelMenu.value = false;
 };
 
@@ -141,7 +137,7 @@ const emit = defineEmits(['send', 'stop']);
  * 处理发送逻辑
  */
 const handleSend = () => {
-  if (props.loading || !input.value.trim()) return;
+  if (loading.value || !input.value.trim()) return;
   emit('send', input.value);
   input.value = '';
 };
@@ -150,7 +146,7 @@ const handleSend = () => {
  * 处理按钮点击逻辑（发送或停止）
  */
 const handleAction = () => {
-  if (props.loading) {
+  if (loading.value) {
     emit('stop');
   } else {
     handleSend();

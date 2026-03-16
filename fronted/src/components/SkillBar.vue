@@ -1,6 +1,6 @@
 <template>
   <!-- 技能工具栏：与输入框对齐，移除背景色 -->
-  <div class="bg-white overflow-x-auto no-scrollbar shrink-0 w-full" style="padding: 0 32px;">
+  <div class="bg-white overflow-x-auto no-scrollbar shrink-0 w-full" style="padding: 0px 32px; margin-top: 8px;">
     <div class="max-w-4xl mx-auto flex items-center gap-2 py-2">
       <!-- 遍历渲染每个技能按钮：加深颜色，选中时为淡蓝色，增加间距，移除选中蓝点 -->
       <button 

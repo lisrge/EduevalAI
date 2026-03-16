@@ -4,7 +4,10 @@
     
     <!-- 侧边栏头部：新建对话按钮 -->
     <div style="padding: 12px;">
-      <button class="w-full bg-[#2563eb]/10 hover:bg-[#2563eb]/20 text-[#2563eb] font-black py-2 px-4 rounded-full flex items-center justify-center gap-2 transition-all active:scale-[0.98] border-none shadow-sm text-xs">
+      <button 
+        @click="handleNewConversation"
+        class="w-full bg-[#2563eb]/10 hover:bg-[#2563eb]/20 text-[#2563eb] font-black py-2 px-4 rounded-full flex items-center justify-center gap-2 transition-all active:scale-[0.98] border-none shadow-sm text-xs"
+      >
         <Plus :size="16" stroke-width="3" />
         <span>新建对话</span>
       </button>
@@ -23,18 +26,22 @@
           <div 
             v-for="chat in group" 
             :key="chat.id"
+            @click="handleSwitchConversation(chat.id)"
             class="group rounded-lg cursor-pointer transition-all duration-200 flex items-center"
             style="gap: 8px; padding: 8px 10px; background-color: #f1f5f9;"
-            :style="chat.active ? 'background-color: #e2e8f0; color: #2563eb;' : ''"
+            :style="currentConversationId === chat.id ? 'background-color: #e2e8f0; color: #2563eb;' : ''"
           >
             <!-- 左侧消息图标：强制同行对齐 -->
-            <MessageSquare :size="12" class="shrink-0" :style="chat.active ? 'color: #2563eb;' : 'color: #64748b;'" />
+            <div class="shrink-0 flex items-center justify-center w-4 h-4">
+              <Loader2 v-if="chat.loading" :size="12" class="animate-spin text-primary" />
+              <MessageSquare v-else :size="12" :style="currentConversationId === chat.id ? 'color: #2563eb;' : 'color: #64748b;'" />
+            </div>
             
             <!-- 内容区：单行 -->
             <div class="flex-1 min-w-0 flex items-center justify-between gap-2">
-              <p class="text-[11px] font-bold truncate leading-none" :style="chat.active ? 'color: #2563eb;' : 'color: #1e293b;'">{{ chat.title }}</p>
+              <p class="text-[11px] font-bold truncate leading-none" :style="currentConversationId === chat.id ? 'color: #2563eb;' : 'color: #1e293b;'">{{ chat.title }}</p>
               <!-- 模型标签 -->
-              <span class="shrink-0 text-[7px] px-1 py-0.5 bg-white/50 text-slate-500 rounded font-black uppercase">
+              <span v-if="!chat.loading" class="shrink-0 text-[7px] px-1 py-0.5 bg-white/50 text-slate-500 rounded font-black uppercase">
                 {{ chat.model }}
               </span>
             </div>
@@ -46,27 +53,31 @@
 </template>
 
 <script setup>
-import { Plus, MessageSquare } from 'lucide-vue-next';
-import { ref, defineProps } from 'vue';
+import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
+import { Plus, MessageSquare, Loader2 } from 'lucide-vue-next';
+import { useChatStore } from '../stores/chatStore';
 
-// 编译器宏
-defineProps({});
+const chatStore = useChatStore();
+const { history, currentConversationId } = storeToRefs(chatStore);
 
-/**
- * 模拟历史会话数据
- */
-const historyGroups = ref({
-  '今日': [
-    { id: 1, title: '如何使用 Vue 3 核心功能?', model: 'GPT-4', active: true },
-    { id: 2, title: 'Tailwind CSS 布局技巧分享', model: 'Claude 3', active: false },
-  ],
-  '本周': [
-    { id: 3, title: 'Python 异步编程深度解析', model: 'GPT-4', active: false },
-  ],
-  '更早': [
-    { id: 4, title: 'Node.js 性能优化指南', model: 'Llama 3', active: false },
-  ]
+const handleNewConversation = () => {
+  chatStore.createNewConversation();
+};
+
+const handleSwitchConversation = (id) => {
+  chatStore.switchConversation(id);
+};
+
+// 简单的按时间分组逻辑
+const historyGroups = computed(() => {
+  // 在这里可以实现更复杂的按“今日”、“本周”等分组的逻辑
+  // 目前为了简单起见，直接返回一个分组
+  return {
+    '最近对话': history.value
+  };
 });
+
 </script>
 
 <style scoped>
