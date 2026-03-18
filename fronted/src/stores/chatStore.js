@@ -1,5 +1,8 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
+import { detectIntent } from '../utils/intent';
+import { executeOrganizeFiles, previewOrganizeFiles } from '../services/tools';
+import { INTENTS, TOOL_NAMES } from '../constants/intents';
 
 // 模拟 API
 const mockApi = {
@@ -71,6 +74,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!targetId || !conversations.value[targetId]) return;
 
     const convo = conversations.value[targetId];
+    const normalizedContent = String(content || '');
     
     // 检查是否需要显示头像（如果是停止后的第一条或者新对话的第一条）
     const isFirstAfterStop = convo.wasInterrupted;
@@ -78,7 +82,8 @@ export const useChatStore = defineStore('chat', () => {
 
     const userMessage = { 
       role: 'user', 
-      content,
+      type: 'text',
+      content: normalizedContent,
       isFirstAfterStop: isFirstAfterStop || convo.messages.length === 0
     };
     
@@ -86,16 +91,72 @@ export const useChatStore = defineStore('chat', () => {
 
     // 如果是第一条用户消息，使用它作为标题
     if (convo.messages.filter(m => m.role === 'user').length === 1) {
-      convo.title = content.substring(0, 20);
+      convo.title = normalizedContent.substring(0, 20);
     }
 
     convo.loading = true;
     
     try {
-      const aiMessage = await mockApi.chat(content);
-      // 确保消息仍然发送到正确的会话中
+      const detected = detectIntent(normalizedContent);
+
+      if (detected?.intent === INTENTS.ORGANIZE_FILES) {
+        const toolResult =
+          detected.mode === 'execute'
+            ? await executeOrganizeFiles(detected.params)
+            : await previewOrganizeFiles(detected.params);
+
+        const pathLabel =
+          detected.params.pathKey === 'desktop'
+            ? '桌面'
+            : detected.params.pathKey === 'documents'
+              ? '文档'
+              : '下载';
+
+        const actions =
+          detected.mode === 'execute'
+            ? []
+            : [
+                { label: '确认整理', command: `确认整理 ${pathLabel}` },
+                { label: '直接整理', command: `直接整理 ${pathLabel}` },
+              ];
+
+        if (conversations.value[targetId] && conversations.value[targetId].loading) {
+          conversations.value[targetId].messages.push({
+            role: 'ai',
+            type: 'tool_result',
+            toolName: TOOL_NAMES.ORGANIZER,
+            result: toolResult,
+            actions,
+            model: currentModel.value,
+          });
+          conversations.value[targetId].model = currentModel.value;
+        }
+        return;
+      }
+
+      if (normalizedContent.startsWith('确认整理') || normalizedContent.startsWith('直接整理') || normalizedContent.startsWith('执行整理')) {
+        const pathKey = normalizedContent.includes('桌面') ? 'desktop' : normalizedContent.includes('文档') ? 'documents' : 'downloads';
+        const toolResult = await executeOrganizeFiles({ pathKey });
+
+        if (conversations.value[targetId] && conversations.value[targetId].loading) {
+          conversations.value[targetId].messages.push({
+            role: 'ai',
+            type: 'tool_result',
+            toolName: TOOL_NAMES.ORGANIZER,
+            result: toolResult,
+            actions: [],
+            model: currentModel.value,
+          });
+          conversations.value[targetId].model = currentModel.value;
+        }
+        return;
+      }
+
+      const aiMessage = await mockApi.chat(normalizedContent);
+      aiMessage.type = 'text';
+      aiMessage.model = currentModel.value;
+
       if (conversations.value[targetId] && conversations.value[targetId].loading) {
-        aiMessage.model = currentModel.value;
         conversations.value[targetId].messages.push(aiMessage);
         conversations.value[targetId].model = currentModel.value;
       }
@@ -134,6 +195,7 @@ export const useChatStore = defineStore('chat', () => {
     // 添加欢迎语
     conversations.value[id].messages.push({
       role: 'ai',
+      type: 'text',
       model: currentModel.value,
       content: '你好！我是 ModelHub AI。我们开始聊天吧！',
     });

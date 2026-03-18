@@ -42,13 +42,53 @@
             ? 'background-color: #2563eb; color: #ffffff !important; border-radius: 16px 2px 16px 16px; padding: 10px 16px;' 
             : 'background-color: #f0f4f9; color: #1e293b !important; border-radius: 2px 16px 16px 16px; padding: 10px 16px;'"
         >
-          <!-- 消息文本：强制换行 -->
-          <div class="whitespace-pre-wrap font-medium break-words" style="color: inherit !important;">
-            {{ message.content }}
-          </div>
-          
-          <!-- 流式输出光标 -->
-          <span v-if="message.streaming" class="inline-block w-1.5 h-4 bg-primary ml-1 animate-pulse align-middle"></span>
+          <template v-if="message.type === 'tool_result'">
+            <div class="flex items-center gap-2 font-black text-[11px] uppercase tracking-widest opacity-70" style="color: inherit !important;">
+              <span>🔧</span>
+              <span>{{ message.toolName || '工具' }}</span>
+            </div>
+            <pre class="whitespace-pre-wrap font-medium break-words mt-2" style="color: inherit !important; font-family: inherit; margin: 0;">{{ message.result }}</pre>
+            <div v-if="message.actions?.length" class="flex flex-wrap gap-2 mt-3">
+              <button
+                v-for="(action, i) in message.actions"
+                :key="i"
+                class="px-3 py-1.5 rounded-full bg-white/70 hover:bg-white text-[11px] font-black text-primary uppercase tracking-tighter shadow-sm transition-colors"
+                @click="emitAction(action.command)"
+              >
+                {{ action.label }}
+              </button>
+            </div>
+          </template>
+
+          <template v-else-if="message.type === 'intent_detected'">
+            <div class="flex items-center gap-2 font-black text-[11px] uppercase tracking-widest opacity-70" style="color: inherit !important;">
+              <span>🤔</span>
+              <span>意图识别</span>
+            </div>
+            <div class="whitespace-pre-wrap font-medium break-words mt-2" style="color: inherit !important;">
+              {{ message.message || message.content }}
+            </div>
+            <div v-if="message.actions?.length" class="flex flex-wrap gap-2 mt-3">
+              <button
+                v-for="(action, i) in message.actions"
+                :key="i"
+                class="px-3 py-1.5 rounded-full bg-white/70 hover:bg-white text-[11px] font-black text-primary uppercase tracking-tighter shadow-sm transition-colors"
+                @click="emitAction(action.command)"
+              >
+                {{ action.label }}
+              </button>
+            </div>
+          </template>
+
+          <template v-else>
+            <!-- 消息文本：强制换行 -->
+            <div class="whitespace-pre-wrap font-medium break-words" style="color: inherit !important;">
+              {{ message.content }}
+            </div>
+            
+            <!-- 流式输出光标 -->
+            <span v-if="message.streaming" class="inline-block w-1.5 h-4 bg-primary ml-1 animate-pulse align-middle"></span>
+          </template>
         </div>
 
         <!-- 思考过程：色块化展示 -->
@@ -82,7 +122,7 @@
 </template>
 
 <script setup>
-import { ref, defineProps } from 'vue';
+import { ref, defineEmits, defineProps } from 'vue';
 import { Bot, User, ChevronDown, FileText } from 'lucide-vue-next';
 
 /**
@@ -99,5 +139,12 @@ defineProps({
   }
 });
 
+const emit = defineEmits(['action']);
+
 const showThinking = ref(false);
+
+const emitAction = (command) => {
+  if (!command) return;
+  emit('action', command);
+};
 </script>

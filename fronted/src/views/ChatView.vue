@@ -18,7 +18,7 @@
         <main class="flex-1 flex flex-col min-w-0 bg-white rounded-[24px] shadow-sm overflow-hidden relative h-full">
           <!-- 消息显示列表：直接作为 flex 子元素，并强制 w-full 和 overflow-hidden -->
           <div class="flex-1 min-h-0 min-w-0 overflow-hidden relative">
-            <MessageList :messages="messages" :loading="loading" />
+            <MessageList :messages="messages" :loading="loading" @action="onSendMessage" />
           </div>
 
           <!-- 底部操作区容器：固定白色背景，shrink-0 确保不被压缩，移除边框 -->

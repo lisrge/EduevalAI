@@ -9,6 +9,7 @@
         :key="index" 
         :message="msg" 
         :is-continuous="isContinuousMessage(index)"
+        @action="handleAction"
       />
     </div>
     
@@ -28,7 +29,7 @@
 </template>
 
 <script setup>
-import { defineProps, ref, watch, onMounted, nextTick } from 'vue';
+import { defineEmits, defineProps, ref, watch, onMounted, nextTick } from 'vue';
 import MessageItem from './MessageItem.vue';
 
 /**
@@ -44,6 +45,8 @@ const props = defineProps({
     default: false
   }
 });
+
+const emit = defineEmits(['action']);
 
 const scrollContainer = ref(null);
 const bottomAnchor = ref(null);
@@ -75,6 +78,10 @@ watch(() => props.messages, scrollToBottom, { deep: true });
 watch(() => props.loading, (newVal) => { if (newVal) scrollToBottom(); });
 
 onMounted(scrollToBottom);
+
+const handleAction = (command) => {
+  emit('action', command);
+};
 </script>
 
 <style scoped>
