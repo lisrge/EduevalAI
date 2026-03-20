@@ -42,7 +42,35 @@
             ? 'background-color: #2563eb; color: #ffffff !important; border-radius: 16px 2px 16px 16px; padding: 10px 16px;' 
             : 'background-color: #f0f4f9; color: #1e293b !important; border-radius: 2px 16px 16px 16px; padding: 10px 16px;'"
         >
-          <template v-if="message.type === 'tool_result'">
+          <template v-if="message.type === 'file_upload_result'">
+            <div class="flex items-center gap-2 font-black text-[11px] uppercase tracking-widest opacity-70" style="color: inherit !important;">
+              <span>📎</span>
+              <span>{{ message.toolName || '文档上传' }}</span>
+            </div>
+            <pre class="whitespace-pre-wrap font-medium break-words mt-2" style="color: inherit !important; font-family: inherit; margin: 0;">{{ message.result }}</pre>
+            <div v-if="message.files?.length" class="flex flex-col mt-3" style="gap: 10px;">
+              <button
+                v-for="file in message.files"
+                :key="file.id"
+                class="w-full flex items-center justify-between gap-3 px-4 py-2 rounded-[14px] border-none outline-none focus:outline-none focus:ring-0 transition-colors text-left shadow-sm"
+                style="background-color: rgba(224,231,255,0.9);"
+                @click="emitFileSelect(file.id)"
+              >
+                <div class="flex items-center gap-3 min-w-0">
+                  <FileText :size="16" class="shrink-0" style="color: rgba(37,99,235,0.85);" />
+                  <div class="min-w-0">
+                    <div class="text-[12px] font-black text-text-primary truncate" style="color: inherit !important;">{{ file.name }}</div>
+                    <div class="text-[10px] font-black uppercase tracking-widest" style="color: rgba(37,99,235,0.6);">{{ file.kind || 'file' }}</div>
+                  </div>
+                </div>
+                <div class="text-[10px] font-black uppercase tracking-widest shrink-0" style="color: rgba(37,99,235,0.6);">
+                  {{ typeof file.size === 'number' ? `${Math.ceil(file.size / 1024)}KB` : '' }}
+                </div>
+              </button>
+            </div>
+          </template>
+
+          <template v-else-if="message.type === 'tool_result'">
             <div class="flex items-center gap-2 font-black text-[11px] uppercase tracking-widest opacity-70" style="color: inherit !important;">
               <span>🔧</span>
               <span>{{ message.toolName || '工具' }}</span>
@@ -139,12 +167,17 @@ defineProps({
   }
 });
 
-const emit = defineEmits(['action']);
+const emit = defineEmits(['action', 'fileSelect']);
 
 const showThinking = ref(false);
 
 const emitAction = (command) => {
   if (!command) return;
   emit('action', command);
+};
+
+const emitFileSelect = (fileId) => {
+  if (!fileId) return;
+  emit('fileSelect', fileId);
 };
 </script>

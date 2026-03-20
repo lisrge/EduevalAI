@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+import { defineStore, acceptHMRUpdate } from 'pinia';
 import { ref, computed } from 'vue';
 import { detectIntent } from '../utils/intent';
 import { executeOrganizeFiles, previewOrganizeFiles } from '../services/tools';
@@ -24,11 +24,47 @@ function generateUniqueId() {
   return Math.random().toString(36).substring(2, 9);
 }
 
+function generateFileId() {
+  return `file_${Date.now()}_${generateUniqueId()}`;
+}
+
+function formatFileSize(bytes) {
+  const value = Number(bytes || 0);
+  if (value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const idx = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  const size = value / Math.pow(1024, idx);
+  return `${size.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
+function inferFileKind(file) {
+  const name = String(file?.name || '').toLowerCase();
+  const type = String(file?.type || '').toLowerCase();
+  if (type.startsWith('image/')) return 'image';
+  if (type.startsWith('text/')) return 'text';
+  if (/\.(txt|md|json|csv|log|yaml|yml)$/i.test(name)) return 'text';
+  return 'unknown';
+}
+
+function readFileAsText(file, maxChars) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || '');
+      resolve(text.length > maxChars ? `${text.slice(0, maxChars)}\n\n…（内容已截断）` : text);
+    };
+    reader.onerror = () => reject(reader.error || new Error('read failed'));
+    reader.readAsText(file);
+  });
+}
+
 export const useChatStore = defineStore('chat', () => {
   // --- State ---
   const conversations = ref({});
   const currentConversationId = ref(null);
   const currentModel = ref('GPT-4 Turbo');
+  const uploadedFiles = ref({});
+  const selectedFileId = ref(null);
   
   // --- Getters ---
   const currentConversation = computed(() => {
@@ -50,6 +86,12 @@ export const useChatStore = defineStore('chat', () => {
       model,
       loading 
     }));
+  });
+
+  const selectedFile = computed(() => {
+    const id = selectedFileId.value;
+    if (!id) return null;
+    return uploadedFiles.value[id] || null;
   });
 
   // --- Actions ---
@@ -212,21 +254,140 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function uploadFiles(files) {
+    const targetId = currentConversationId.value;
+    if (!targetId || !conversations.value[targetId]) return;
+
+    const list = Array.from(files || []).filter(Boolean);
+    if (!list.length) return;
+
+    const convo = conversations.value[targetId];
+
+    const fileEntries = [];
+    for (const file of list) {
+      const id = generateFileId();
+      const kind = inferFileKind(file);
+      const entry = {
+        id,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        kind,
+        uploadedAt: Date.now(),
+        url: null,
+        text: null,
+        serverFileId: null,
+      };
+
+      if (kind === 'image') {
+        entry.url = URL.createObjectURL(file);
+      } else if (kind === 'text') {
+        try {
+          entry.text = await readFileAsText(file, 200000);
+        } catch (e) {
+          entry.text = '⚠️ 无法读取文本内容';
+        }
+      }
+
+      uploadedFiles.value[id] = entry;
+      fileEntries.push(entry);
+    }
+
+    const fileLines = list.map(f => `- ${f.name} (${formatFileSize(f.size)})`);
+    convo.messages.push({
+      role: 'user',
+      type: 'text',
+      content: `上传文件：\n${fileLines.join('\n')}`,
+      isFirstAfterStop: convo.wasInterrupted || convo.messages.length === 0,
+    });
+    convo.wasInterrupted = false;
+
+    const formData = new FormData();
+    for (const file of list) {
+      formData.append('files', file, file.name);
+    }
+
+    let resultText = '';
+
+    try {
+      const response = await fetch('/api/files/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      const items = data?.data?.files || data?.files || [];
+      const uploadedLines = Array.isArray(items) && items.length
+        ? items.map(item => `- ${item.originalName || item.name || 'unknown'}${item.fileId ? `（ID: ${item.fileId}）` : ''}`)
+        : list.map(f => `- ${f.name}`);
+      resultText = `✅ 上传成功\n${uploadedLines.join('\n')}`;
+
+      if (Array.isArray(items) && items.length) {
+        for (let i = 0; i < Math.min(items.length, fileEntries.length); i += 1) {
+          const fileId = items[i]?.fileId;
+          if (fileId) {
+            uploadedFiles.value[fileEntries[i].id].serverFileId = fileId;
+          }
+        }
+      }
+    } catch (error) {
+      resultText = `⚠️ 未能上传到服务器（后端未接入或接口不可用）\n已读取待上传文件：\n${fileLines.join('\n')}`;
+    }
+
+    convo.messages.push({
+      role: 'ai',
+      type: 'file_upload_result',
+      toolName: '文档上传',
+      result: resultText,
+      files: fileEntries.map(f => ({
+        id: f.id,
+        name: f.name,
+        size: f.size,
+        kind: f.kind,
+      })),
+      actions: [],
+      model: currentModel.value,
+    });
+    convo.model = currentModel.value;
+  }
+
+  function selectFile(fileId) {
+    if (!fileId) return;
+    if (!uploadedFiles.value[fileId]) return;
+    selectedFileId.value = fileId;
+  }
+
+  function clearSelectedFile() {
+    selectedFileId.value = null;
+  }
+
   return {
     // State
     conversations,
     currentConversationId,
     currentModel,
+    uploadedFiles,
+    selectedFileId,
     // Getters
     currentConversation,
     messages,
     loading,
     history,
+    selectedFile,
     // Actions
     initialize,
     sendMessage,
     stopGenerating,
     createNewConversation,
     switchConversation,
+    uploadFiles,
+    selectFile,
+    clearSelectedFile,
   };
 });
+
+if (module.hot) {
+  module.hot.accept(acceptHMRUpdate(useChatStore, module.hot));
+}

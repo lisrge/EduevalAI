@@ -26,6 +26,7 @@
           <div class="flex items-center gap-2">
             <button 
               :disabled="loading"
+              @click="openFilePicker"
               class="flex items-center justify-center px-4 py-1.5 text-primary transition-all duration-300 border-none" 
               :class="loading ? 'cursor-not-allowed' : 'hover:bg-[#c7d2fe]'"
               style="border-radius: 10px !important; background-color: #e0e7ff !important; opacity: 1 !important;"
@@ -33,6 +34,13 @@
             >
               <Paperclip :size="18" />
             </button>
+            <input
+              ref="fileInputRef"
+              type="file"
+              multiple
+              class="hidden"
+              @change="handleFileChange"
+            />
             <button 
               :disabled="loading"
               class="flex items-center justify-center px-4 py-1.5 text-primary transition-all duration-300 border-none" 
@@ -116,6 +124,7 @@ const { loading, currentModel } = storeToRefs(chatStore);
 const input = ref('');
 // 文本框 DOM 引用
 const textareaRef = ref(null);
+const fileInputRef = ref(null);
 
 // 模型选择状态
 const showModelMenu = ref(false);
@@ -131,7 +140,7 @@ const selectModel = (name) => {
 };
 
 // 定义事件
-const emit = defineEmits(['send', 'stop']);
+const emit = defineEmits(['send', 'stop', 'upload']);
 
 /**
  * 处理发送逻辑
@@ -150,6 +159,23 @@ const handleAction = () => {
     emit('stop');
   } else {
     handleSend();
+  }
+};
+
+const openFilePicker = () => {
+  if (loading.value) return;
+  if (fileInputRef.value) {
+    fileInputRef.value.click();
+  }
+};
+
+const handleFileChange = (event) => {
+  const files = event?.target?.files;
+  if (files && files.length) {
+    emit('upload', files);
+  }
+  if (event?.target) {
+    event.target.value = '';
   }
 };
 </script>

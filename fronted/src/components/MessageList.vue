@@ -10,6 +10,7 @@
         :message="msg" 
         :is-continuous="isContinuousMessage(index)"
         @action="handleAction"
+        @file-select="handleFileSelect"
       />
     </div>
     
@@ -46,7 +47,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['action']);
+const emit = defineEmits(['action', 'fileSelect']);
 
 const scrollContainer = ref(null);
 const bottomAnchor = ref(null);
@@ -81,6 +82,10 @@ onMounted(scrollToBottom);
 
 const handleAction = (command) => {
   emit('action', command);
+};
+
+const handleFileSelect = (fileId) => {
+  emit('fileSelect', fileId);
 };
 </script>
 
