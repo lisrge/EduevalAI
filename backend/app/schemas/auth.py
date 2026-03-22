@@ -1,0 +1,25 @@
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class UserPublic(BaseModel):
+    id: int
+    student_id: str
+    created_at: datetime
+
+
+class LoginPayload(BaseModel):
+    student_id: str
+    password: str
+    remember_me: bool = False
+
+
+class LoginResponse(BaseModel):
+    token: str
+    user: UserPublic
+
+
+class MeResponse(BaseModel):
+    user: UserPublic
+

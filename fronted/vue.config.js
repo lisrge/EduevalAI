@@ -5,7 +5,7 @@ module.exports = defineConfig({
     config
       .plugin('html')
       .tap(args => {
-        args[0].title = 'ModelHub';
+        args[0].title = 'EduevalAI';
         return args;
       })
   }
