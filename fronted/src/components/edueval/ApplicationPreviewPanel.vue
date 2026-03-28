@@ -10,7 +10,7 @@
         <a
           v-if="absolutePreviewUrl"
           class="ghost-button"
-          :href="absolutePreviewUrl"
+          :href="absolutePreviewUrlWithTheme || absolutePreviewUrl"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -33,7 +33,7 @@
       <div v-else-if="!item" class="empty-state">请先从申请书列表中选择一份申请书。</div>
       <div v-else-if="absolutePreviewUrl" style="height: 720px; min-height: 520px; resize: vertical; overflow: hidden;">
         <iframe
-          :src="absolutePreviewUrl"
+          :src="absolutePreviewUrlWithTheme || absolutePreviewUrl"
           title="application preview"
           style="width: 100%; height: 100%; border: 1px solid var(--border); border-radius: 16px; background: var(--surface);"
         />
@@ -51,6 +51,7 @@
 <script setup>
 import { computed } from 'vue';
 import { getServerBase } from '../../services/eduevalApi';
+import { useThemeStore } from '../../stores/themeStore';
 
 const props = defineProps({
   enabled: {
@@ -62,6 +63,8 @@ const props = defineProps({
     default: null,
   },
 });
+
+const themeStore = useThemeStore();
 
 const fileName = computed(() => props.item?.fileName || '');
 
@@ -84,4 +87,17 @@ const downloadPath = computed(() => {
 
 const absolutePreviewUrl = computed(() => toAbsoluteUrl(previewPath.value));
 const absoluteDownloadUrl = computed(() => toAbsoluteUrl(downloadPath.value));
+
+const absolutePreviewUrlWithTheme = computed(() => {
+  const raw = absolutePreviewUrl.value;
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    url.searchParams.set('theme', themeStore.isDark ? 'dark' : 'light');
+    return url.toString();
+  } catch (e) {
+    const sep = raw.includes('?') ? '&' : '?';
+    return `${raw}${sep}theme=${themeStore.isDark ? 'dark' : 'light'}`;
+  }
+});
 </script>

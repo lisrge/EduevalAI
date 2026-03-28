@@ -267,9 +267,9 @@ function resolvedScore(item) {
 function studentLabel(item) {
   const application = item?.detail?.application || item?.application || null;
   if (!application) return '-';
-  const name = application.student_name || '-';
-  const sid = application.student_id || '-';
-  return `${name} / ${sid}`;
+  const raw = (application.student_name || '').trim();
+  if (!raw || raw.toLowerCase() === 'unknown') return '-';
+  return raw;
 }
 
 function projectLabel(item) {

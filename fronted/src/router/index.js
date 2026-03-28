@@ -28,6 +28,24 @@ const router = createRouter({
       component: () => import('../views/ProfileView.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/documents',
+      name: 'documents',
+      component: () => import('../views/MyDocumentsView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/documents/:type/new',
+      name: 'document-new',
+      component: () => import('../views/DocumentEditorView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/documents/:type/:id',
+      name: 'document-edit',
+      component: () => import('../views/DocumentEditorView.vue'),
+      meta: { requiresAuth: true },
+    },
   ]
 })
 

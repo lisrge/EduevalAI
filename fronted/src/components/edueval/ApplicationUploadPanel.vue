@@ -33,6 +33,9 @@
         <button class="primary-button" type="submit" :disabled="submitting || files.length === 0">
           {{ submitting ? '上传处理中...' : uploadButtonText }}
         </button>
+        <button class="ghost-button" type="button" :disabled="submitting" @click="goMyDocuments">
+          我的申请书
+        </button>
       </div>
     </form>
   </section>
@@ -40,6 +43,7 @@
 
 <script setup>
 import { computed, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 defineProps({
   submitting: {
@@ -54,6 +58,7 @@ const fileInputRef = ref(null);
 const files = ref([]);
 const autoScore = ref(true);
 const uploadButtonText = computed(() => (files.value.length ? `开始上传 (${files.value.length})` : '开始上传'));
+const router = useRouter();
 
 function handleFileChange(event) {
   files.value = Array.from(event?.target?.files ?? []);
@@ -67,5 +72,9 @@ function submitForm() {
   if (fileInputRef.value) {
     fileInputRef.value.value = '';
   }
+}
+
+function goMyDocuments() {
+  router.push({ name: 'documents' });
 }
 </script>

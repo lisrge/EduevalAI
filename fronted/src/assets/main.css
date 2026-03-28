@@ -530,6 +530,12 @@ tbody tr.selected {
   color: var(--badge-error-text);
 }
 
+.alert.success {
+  border-color: var(--badge-ok-text);
+  background: var(--badge-ok-bg);
+  color: var(--badge-ok-text);
+}
+
 @media (max-width: 1080px) {
   .edueval-layout {
     grid-template-columns: 1fr;
