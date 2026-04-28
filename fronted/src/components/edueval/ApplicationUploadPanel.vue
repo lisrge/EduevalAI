@@ -16,10 +16,11 @@
 
       <label class="field field-wide checkbox-field">
         <span>上传策略</span>
-        <label class="checkbox-row">
+        <label v-if="allowScoring" class="checkbox-row">
           <input v-model="autoScore" type="checkbox" :disabled="submitting" />
           <span>上传后立即评分</span>
         </label>
+        <span v-else class="panel-subtitle">普通用户无法评分。</span>
       </label>
 
       <div v-if="files.length > 0" class="field field-wide">
@@ -36,6 +37,9 @@
         <button class="ghost-button" type="button" :disabled="submitting" @click="goMyDocuments">
           我的申请书
         </button>
+        <button class="ghost-button" type="button" :disabled="submitting" @click="goHomework">
+          收作业
+        </button>
       </div>
     </form>
   </section>
@@ -45,10 +49,14 @@
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
-defineProps({
+const props = defineProps({
   submitting: {
     type: Boolean,
     default: false,
+  },
+  allowScoring: {
+    type: Boolean,
+    default: true,
   },
 });
 
@@ -65,7 +73,7 @@ function handleFileChange(event) {
 }
 
 function submitForm() {
-  emit('submit', { files: files.value, autoScore: autoScore.value });
+  emit('submit', { files: files.value, autoScore: props.allowScoring ? autoScore.value : false });
 
   files.value = [];
   autoScore.value = true;
@@ -76,5 +84,9 @@ function submitForm() {
 
 function goMyDocuments() {
   router.push({ name: 'documents' });
+}
+
+function goHomework() {
+  router.push({ name: 'homework' });
 }
 </script>

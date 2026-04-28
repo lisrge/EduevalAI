@@ -715,7 +715,7 @@ async function uploadNow() {
         student_id: '',
         project_title: draft.content?.project_name,
       };
-    await uploadApplicationFile(file, meta);
+    await uploadApplicationFile(authStore.token, file, meta);
     if (hintTimer) clearTimeout(hintTimer);
     saveState.value = 'saved';
     hintTimer = setTimeout(() => {

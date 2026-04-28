@@ -78,6 +78,8 @@ async def create_user(db: Session, student_id: str, password: str, signature: Up
         student_id=student_id,
         password_salt=salt,
         password_hash=pwd_hash,
+        role="user",
+        is_root_admin=False,
         signature_file_name=safe_name,
         signature_path=str(target_path),
         created_at=datetime.utcnow(),
@@ -85,6 +87,14 @@ async def create_user(db: Session, student_id: str, password: str, signature: Up
     db.add(user)
     db.commit()
     db.refresh(user)
+    root_exists = db.query(User).filter(User.is_root_admin == True).count()
+    if root_exists == 0:
+        first = db.query(User).order_by(User.id.asc()).first()
+        if first and first.id == user.id:
+            user.role = "admin"
+            user.is_root_admin = True
+            db.commit()
+            db.refresh(user)
     return user
 
 

@@ -6,7 +6,7 @@
         <p class="panel-subtitle">项目实用性 60 分 + 项目创新性 40 分</p>
       </div>
       <button
-        v-if="item"
+        v-if="item && allowScoring"
         class="primary-button"
         :disabled="!item.applicationId || item.scoreStatus === 'scoring'"
         @click="$emit('score', item.localId)"
@@ -114,6 +114,10 @@ const props = defineProps({
   loading: {
     type: Boolean,
     default: false,
+  },
+  allowScoring: {
+    type: Boolean,
+    default: true,
   },
 });
 

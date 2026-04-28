@@ -9,7 +9,7 @@
       </div>
       <div class="action-grid" style="width: 100%;">
         <button class="ghost-button" type="button" @click="refreshList">刷新列表</button>
-        <button class="ghost-button" type="button" :disabled="selectedIds.length === 0" @click="batchScore">
+        <button v-if="allowScoring" class="ghost-button" type="button" :disabled="selectedIds.length === 0" @click="batchScore">
           批量评分
         </button>
         <button class="ghost-button danger-outline" type="button" :disabled="selectedIds.length === 0" @click="batchDelete">
@@ -101,12 +101,14 @@
             </td>
             <td>
               <button
+                v-if="allowScoring"
                 class="table-button"
                 :disabled="item.uploadStatus !== 'uploaded' || item.scoreStatus === 'scoring'"
                 @click.stop="$emit('score', item.localId)"
               >
                 {{ item.scoreStatus === 'scoring' ? '评分中...' : '评分' }}
               </button>
+              <span v-else class="empty-inline">-</span>
             </td>
           </tr>
           <tr v-if="filteredItems.length === 0">
@@ -130,6 +132,10 @@ const props = defineProps({
   selectedLocalId: {
     type: String,
     default: null,
+  },
+  allowScoring: {
+    type: Boolean,
+    default: true,
   },
 });
 

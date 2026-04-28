@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8001
 
-    database_url: str = "sqlite+pysqlite:///./edueval_ai.sqlite3"
+    database_url: str = "mysql+pymysql://user:password@127.0.0.1:3306/edueval_ai?charset=utf8mb4"
 
     cors_origins: str = "*"
 

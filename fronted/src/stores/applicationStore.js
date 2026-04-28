@@ -8,6 +8,7 @@ import {
   scoreApplication,
   uploadApplicationFile,
 } from '../services/eduevalApi';
+import { useAuthStore } from './authStore';
 
 function generateUniqueId() {
   return Math.random().toString(36).substring(2, 9);
@@ -110,6 +111,7 @@ export const useApplicationStore = defineStore('applications', () => {
   }
 
   function enqueueBatch({ files = [], autoScore = true } = {}) {
+    const authStore = useAuthStore();
     const fileList = Array.from(files || []);
     const createdLocalIds = [];
 
@@ -124,8 +126,8 @@ export const useApplicationStore = defineStore('applications', () => {
         fileSizeLabel: formatFileSize(file.size),
         fileType: inferFileType(file),
         uploadStatus: 'queued',
-        scoreStatus: autoScore ? 'queued' : 'idle',
-        autoScore: Boolean(autoScore),
+        scoreStatus: autoScore && authStore.isAdmin ? 'queued' : 'idle',
+        autoScore: Boolean(autoScore) && authStore.isAdmin,
         applicationId: null,
         application: null,
         extraction: null,
@@ -165,7 +167,8 @@ export const useApplicationStore = defineStore('applications', () => {
     updateItem(localId, { uploadStatus: 'uploading', error: null });
 
     try {
-      const payload = await uploadApplicationFile(item.file);
+      const authStore = useAuthStore();
+      const payload = await uploadApplicationFile(authStore.token, item.file);
       const applicationId = payload?.application?.id ?? null;
       updateItem(localId, {
         uploadStatus: 'uploaded',
@@ -197,7 +200,8 @@ export const useApplicationStore = defineStore('applications', () => {
 
     detailLoadingLocalId.value = localId;
     try {
-      const detail = await fetchApplicationDetail(item.applicationId);
+      const authStore = useAuthStore();
+      const detail = await fetchApplicationDetail(authStore.token, item.applicationId);
       updateItem(localId, {
         detail,
         application: detail?.application || item.application,
@@ -214,13 +218,15 @@ export const useApplicationStore = defineStore('applications', () => {
   }
 
   async function scoreOne(localId) {
+    const authStore = useAuthStore();
+    if (!authStore.isAdmin) return;
     const item = getItem(localId);
     if (!item?.applicationId) return;
     if (item.scoreStatus === 'scoring') return;
 
     updateItem(localId, { scoreStatus: 'scoring', error: null });
     try {
-      const payload = await scoreApplication(item.applicationId);
+      const payload = await scoreApplication(authStore.token, item.applicationId);
       updateItem(localId, {
         scoreStatus: 'scored',
         score: payload?.score || item.score,
@@ -237,7 +243,8 @@ export const useApplicationStore = defineStore('applications', () => {
     if (listLoading.value) return;
     listLoading.value = true;
     try {
-      const list = await fetchApplications();
+      const authStore = useAuthStore();
+      const list = await fetchApplications(authStore.token);
       if (Array.isArray(list)) {
         list.forEach((summary) => {
           ensureServerItem(summary);
@@ -249,6 +256,8 @@ export const useApplicationStore = defineStore('applications', () => {
   }
 
   async function batchScoreByLocalIds(localIds = []) {
+    const authStore = useAuthStore();
+    if (!authStore.isAdmin) return;
     const targets = Array.from(new Set(localIds))
       .map(id => getItem(id))
       .filter(Boolean)
@@ -258,7 +267,7 @@ export const useApplicationStore = defineStore('applications', () => {
     if (!targets.length) return;
 
     try {
-      const payload = await batchScoreApplications(targets);
+      const payload = await batchScoreApplications(authStore.token, targets);
       const results = payload?.results || [];
       results.forEach((r) => {
         const applicationId = r?.application_id;
@@ -283,6 +292,7 @@ export const useApplicationStore = defineStore('applications', () => {
   }
 
   async function batchDeleteByLocalIds(localIds = []) {
+    const authStore = useAuthStore();
     const targets = Array.from(new Set(localIds))
       .map(id => getItem(id))
       .filter(Boolean)
@@ -291,7 +301,7 @@ export const useApplicationStore = defineStore('applications', () => {
 
     if (!targets.length) return;
 
-    await batchDeleteApplications(targets);
+    await batchDeleteApplications(authStore.token, targets);
     items.value = items.value.filter(item => !targets.includes(item.applicationId));
     if (selectedLocalId.value && !items.value.some(item => item.localId === selectedLocalId.value)) {
       selectedLocalId.value = items.value[0]?.localId || null;

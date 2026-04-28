@@ -13,12 +13,14 @@ class ApplicationRecord(Base):
     __tablename__ = "application_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    uploader_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     student_name: Mapped[str] = mapped_column(String(100), default="unknown")
     student_id: Mapped[str] = mapped_column(String(50), default="unknown", index=True)
     project_title: Mapped[str] = mapped_column(String(255), default="unknown")
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str] = mapped_column(String(800), nullable=False)
     file_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    file_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True)
 
     text_extract_status: Mapped[str] = mapped_column(String(30), default="uploaded")
     text_content: Mapped[Optional[str]] = mapped_column(Text)
@@ -59,4 +61,3 @@ class ScoreResult(Base):
     scored_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     application: Mapped[ApplicationRecord] = relationship(back_populates="score_result")
-

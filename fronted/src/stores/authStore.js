@@ -38,6 +38,7 @@ export const useAuthStore = defineStore('auth', () => {
   const error = ref(null);
 
   const isAuthenticated = computed(() => Boolean(token.value) && Boolean(user.value));
+  const isAdmin = computed(() => String(user.value?.role || '').toLowerCase() === 'admin');
 
   async function ensureInitialized() {
     if (initialized.value) return;
@@ -114,6 +115,7 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     error,
     isAuthenticated,
+    isAdmin,
     ensureInitialized,
     login,
     register,
@@ -124,4 +126,3 @@ export const useAuthStore = defineStore('auth', () => {
 if (module.hot) {
   module.hot.accept(acceptHMRUpdate(useAuthStore, module.hot));
 }
-

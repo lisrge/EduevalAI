@@ -5,12 +5,13 @@
     <div style="padding: 20px; display: flex; flex-direction: column; gap: 20px;">
       <div class="edueval-layout">
           <div class="edueval-left">
-            <ApplicationUploadPanel class="edueval-panel-fill" style="min-height: 420px;" :submitting="hasPendingWork" @submit="onSubmitUpload" />
+            <ApplicationUploadPanel class="edueval-panel-fill" style="min-height: 420px;" :submitting="hasPendingWork" :allow-scoring="allowScoring" @submit="onSubmitUpload" />
             <ApplicationFileList
               class="edueval-panel-fill"
               style="min-height: 720px;"
               :items="items"
               :selected-local-id="selectedLocalId"
+              :allow-scoring="allowScoring"
               @select="onSelectItem"
               @score="onScoreItem"
               @refresh="onRefreshList"
@@ -21,7 +22,7 @@
             />
           </div>
           <div class="edueval-right">
-            <ScoreDetailPanel class="edueval-panel-fill" :item="selectedItem" :loading="isDetailLoading" @score="onScoreItem" />
+            <ScoreDetailPanel class="edueval-panel-fill" :item="selectedItem" :loading="isDetailLoading" :allow-scoring="allowScoring" @score="onScoreItem" />
           </div>
       </div>
 
@@ -39,10 +40,14 @@ import ApplicationFileList from '../components/edueval/ApplicationFileList.vue';
 import ScoreDetailPanel from '../components/edueval/ScoreDetailPanel.vue';
 import ApplicationPreviewPanel from '../components/edueval/ApplicationPreviewPanel.vue';
 import { useApplicationStore } from '../stores/applicationStore';
+import { useAuthStore } from '../stores/authStore';
 import { buildExportUrl } from '../services/eduevalApi';
 
 const applicationStore = useApplicationStore();
+const authStore = useAuthStore();
 const { items, selectedLocalId, selectedItem, hasPendingWork, detailLoadingLocalId } = storeToRefs(applicationStore);
+
+const allowScoring = computed(() => authStore.isAdmin);
 
 const previewEnabled = ref(false);
 const previewLocalId = ref(null);
@@ -70,6 +75,7 @@ function onSelectItem(localId) {
 }
 
 function onScoreItem(localId) {
+  if (!allowScoring.value) return;
   applicationStore.scoreOne(localId);
 }
 
@@ -78,6 +84,7 @@ function onRefreshList() {
 }
 
 function onBatchScore(localIds) {
+  if (!allowScoring.value) return;
   applicationStore.batchScoreByLocalIds(localIds);
 }
 

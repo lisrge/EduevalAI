@@ -56,6 +56,15 @@
             个人空间
           </button>
           <button
+            v-if="authStore.isAdmin"
+            type="button"
+            class="ghost-button"
+            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
+            @click="goAdmin"
+          >
+            后台管理
+          </button>
+          <button
             type="button"
             class="ghost-button"
             style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; background: transparent;"
@@ -81,7 +90,11 @@ const themeStore = useThemeStore();
 const router = useRouter();
 
 const displayName = computed(() => authStore.user?.student_id || '未登录');
-const displayRole = computed(() => (authStore.user ? 'Student' : 'Guest'));
+const displayRole = computed(() => {
+  if (!authStore.user) return 'Guest';
+  if (authStore.isAdmin) return 'Admin';
+  return 'Student';
+});
 
 const menuOpen = ref(false);
 const userMenuRef = ref(null);
@@ -113,6 +126,11 @@ onBeforeUnmount(() => {
 function goProfile() {
   closeMenu();
   router.push({ name: 'profile' });
+}
+
+function goAdmin() {
+  closeMenu();
+  router.push({ name: 'admin-users' });
 }
 
 async function doLogout() {

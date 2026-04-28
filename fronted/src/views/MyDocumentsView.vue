@@ -210,7 +210,7 @@ async function uploadDraft(type, item) {
         student_id: '',
         project_title: content?.project_name,
       };
-    await uploadApplicationFile(file, meta);
+    await uploadApplicationFile(authStore.token, file, meta);
     localSuccess.value = '上传成功';
     setTimeout(() => {
       localSuccess.value = null;

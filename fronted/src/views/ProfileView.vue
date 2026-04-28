@@ -9,6 +9,7 @@
             <h2>个人空间</h2>
             <p class="panel-subtitle">查看学号与电子签名，并可修改密码。</p>
           </div>
+          <button class="ghost-button" type="button" style="width: auto;" @click="goBack">返回</button>
         </div>
 
         <div class="edueval-panel-body" style="overflow: visible; display: grid; gap: 18px;">
@@ -66,11 +67,13 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import ChatHeader from '../components/ChatHeader.vue';
 import { fetchUserProfile, changeUserPassword, fetchUserSignature } from '../services/eduevalApi';
 import { useAuthStore } from '../stores/authStore';
 
 const authStore = useAuthStore();
+const router = useRouter();
 
 const profile = ref(null);
 const signatureObjectUrl = ref('');
@@ -82,6 +85,10 @@ const localError = ref(null);
 const errorMessage = computed(() => localError.value);
 
 const signatureUrl = computed(() => signatureObjectUrl.value || '');
+
+function goBack() {
+  router.push({ name: 'applications' });
+}
 
 async function loadProfile() {
   localError.value = null;

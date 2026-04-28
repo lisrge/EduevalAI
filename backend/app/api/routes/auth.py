@@ -12,7 +12,13 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _to_public(user: User) -> UserPublic:
-    return UserPublic(id=user.id, student_id=user.student_id, created_at=user.created_at)
+    return UserPublic(
+        id=user.id,
+        student_id=user.student_id,
+        role=user.role,
+        is_root_admin=user.is_root_admin,
+        created_at=user.created_at,
+    )
 
 
 def _bearer_token(authorization: str | None) -> str:

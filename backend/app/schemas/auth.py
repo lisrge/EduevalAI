@@ -6,6 +6,8 @@ from pydantic import BaseModel
 class UserPublic(BaseModel):
     id: int
     student_id: str
+    role: str
+    is_root_admin: bool = False
     created_at: datetime
 
 
@@ -22,4 +24,3 @@ class LoginResponse(BaseModel):
 
 class MeResponse(BaseModel):
     user: UserPublic
-

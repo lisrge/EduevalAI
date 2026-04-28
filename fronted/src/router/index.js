@@ -46,6 +46,36 @@ const router = createRouter({
       component: () => import('../views/DocumentEditorView.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/homework',
+      name: 'homework',
+      component: () => import('../views/HomeworkCollectionView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/homework/history/:type',
+      name: 'homework-history',
+      component: () => import('../views/HomeworkHistoryView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/admin/users',
+      name: 'admin-users',
+      component: () => import('../views/AdminUsersView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
+      path: '/admin/users/:userId/documents/:type',
+      name: 'admin-user-documents',
+      component: () => import('../views/AdminUserDocumentsView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
+      path: '/admin/users/:userId/blogs',
+      name: 'admin-user-blogs',
+      component: () => import('../views/AdminUserBlogsView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
   ]
 })
 
@@ -55,6 +85,10 @@ router.beforeEach(async (to) => {
 
   if (to.meta?.requiresAuth && !authStore.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } };
+  }
+
+  if (to.meta?.requiresAdmin && !authStore.isAdmin) {
+    return { name: 'applications' };
   }
 
   if (to.meta?.guestOnly && authStore.isAuthenticated) {

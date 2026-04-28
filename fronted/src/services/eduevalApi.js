@@ -94,6 +94,20 @@ async function parseBlobResponse(response) {
   return response.blob();
 }
 
+async function parseTextResponse(response) {
+  if (!response.ok) {
+    let message = 'Request failed';
+    try {
+      const payload = await response.json();
+      message = payload?.detail || payload?.message || message;
+    } catch (error) {
+      message = response.statusText || message;
+    }
+    throw new Error(message);
+  }
+  return response.text();
+}
+
 function withAuthHeader(token, headers = {}) {
   if (!token) return headers;
   return {
@@ -102,17 +116,21 @@ function withAuthHeader(token, headers = {}) {
   };
 }
 
-export async function fetchApplications() {
-  const response = await fetchWithFallback(`${getApiBase()}/applications`);
+export async function fetchApplications(token) {
+  const response = await fetchWithFallback(`${getApiBase()}/applications`, {
+    headers: withAuthHeader(token),
+  });
   return parseResponse(response);
 }
 
-export async function fetchApplicationDetail(applicationId) {
-  const response = await fetchWithFallback(`${getApiBase()}/applications/${applicationId}`);
+export async function fetchApplicationDetail(token, applicationId) {
+  const response = await fetchWithFallback(`${getApiBase()}/applications/${applicationId}`, {
+    headers: withAuthHeader(token),
+  });
   return parseResponse(response);
 }
 
-export async function uploadApplicationFile(file, meta = null) {
+export async function uploadApplicationFile(token, file, meta = null) {
   const formData = new FormData();
   formData.append('file', file);
   if (meta && typeof meta === 'object') {
@@ -122,34 +140,38 @@ export async function uploadApplicationFile(file, meta = null) {
   }
   const response = await fetchWithFallback(`${getApiBase()}/applications/upload`, {
     method: 'POST',
+    headers: withAuthHeader(token),
     body: formData,
   });
   return parseResponse(response);
 }
 
-export async function scoreApplication(applicationId) {
+export async function scoreApplication(token, applicationId) {
   const response = await fetchWithFallback(`${getApiBase()}/applications/${applicationId}/score`, {
     method: 'POST',
+    headers: withAuthHeader(token),
   });
   return parseResponse(response);
 }
 
-export async function batchScoreApplications(applicationIds = []) {
+export async function batchScoreApplications(token, applicationIds = []) {
   const response = await fetchWithFallback(`${getApiBase()}/applications/score-batch`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...withAuthHeader(token),
     },
     body: JSON.stringify({ application_ids: applicationIds }),
   });
   return parseResponse(response);
 }
 
-export async function batchDeleteApplications(applicationIds = []) {
+export async function batchDeleteApplications(token, applicationIds = []) {
   const response = await fetchWithFallback(`${getApiBase()}/applications/batch`, {
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',
+      ...withAuthHeader(token),
     },
     body: JSON.stringify({ application_ids: applicationIds }),
   });
@@ -230,6 +252,81 @@ export async function fetchUserSignature(token) {
     headers: withAuthHeader(token),
   });
   return parseBlobResponse(response);
+}
+
+export async function adminListUsers(token) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users`, {
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function adminUpdateUserRole(token, userId, role) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/role`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...withAuthHeader(token),
+    },
+    body: JSON.stringify({ role }),
+  });
+  return parseResponse(response);
+}
+
+export async function adminListUserApplicationDrafts(token, userId) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/drafts/applications`, {
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function adminListUserTaskDrafts(token, userId) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/drafts/tasks`, {
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function adminExportApplicationDraftDocx(token, userId, draftId) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/drafts/applications/${draftId}/docx`, {
+    headers: withAuthHeader(token),
+  });
+  return parseBlobResponse(response);
+}
+
+export async function adminExportTaskDraftDocx(token, userId, draftId) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/drafts/tasks/${draftId}/docx`, {
+    headers: withAuthHeader(token),
+  });
+  return parseBlobResponse(response);
+}
+
+export async function adminFetchApplicationDraftMarkdown(token, userId, draftId) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/drafts/applications/${draftId}/md`, {
+    headers: withAuthHeader(token),
+  });
+  return parseTextResponse(response);
+}
+
+export async function adminFetchTaskDraftMarkdown(token, userId, draftId) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/drafts/tasks/${draftId}/md`, {
+    headers: withAuthHeader(token),
+  });
+  return parseTextResponse(response);
+}
+
+export async function adminListUserBlogs(token, userId) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/blogs`, {
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function adminFetchUserBlogMarkdown(token, userId, blogId) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/blogs/${blogId}/md`, {
+    headers: withAuthHeader(token),
+  });
+  return parseTextResponse(response);
 }
 
 export async function listApplicationDrafts(token) {

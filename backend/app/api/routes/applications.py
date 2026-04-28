@@ -3,13 +3,17 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+import hashlib
+
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.base import get_db
 from app.models.application import ApplicationRecord, ScoreResult
+from app.models.user import User
 from app.schemas.application import (
     ApplicationDetail,
     ApplicationInfo,
@@ -24,6 +28,7 @@ from app.schemas.application import (
     ScoreResponse,
     UploadResponse,
 )
+from app.services.auth_service import get_user_by_token
 from app.services.file_service import save_upload_file
 from app.services.preview_service import PreviewError, get_preview_file
 from app.services.scoring_service import score_application_text
@@ -106,11 +111,68 @@ def _to_summary(record: ApplicationRecord) -> ApplicationSummary:
     )
 
 
-async def _create_application_record(upload_file: UploadFile, db: Session) -> ApplicationRecord:
+def _sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        return ""
+    value = authorization.strip()
+    if value.lower().startswith("bearer "):
+        return value[7:].strip()
+    return ""
+
+
+def _current_user(authorization: str | None, db: Session) -> User:
+    token = _bearer_token(authorization)
+    return get_user_by_token(db, token)
+
+
+def _is_admin(user: User) -> bool:
+    return user.role == "admin"
+
+
+def _can_access_record(user: User, record: ApplicationRecord) -> bool:
+    if _is_admin(user):
+        return True
+    if record.uploader_user_id and record.uploader_user_id == user.id:
+        return True
+    if record.student_id and record.student_id == user.student_id:
+        return True
+    return False
+
+
+async def _create_application_record(
+    upload_file: UploadFile,
+    db: Session,
+    uploader_user_id: int | None = None,
+    student_name: str | None = None,
+    student_id: str | None = None,
+    project_title: str | None = None,
+) -> ApplicationRecord:
     try:
         file_path, original_name = await save_upload_file(upload_file)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    file_hash = None
+    try:
+        file_hash = _sha256_file(file_path)
+    except OSError:
+        file_hash = None
+
+    if file_hash:
+        existed = db.query(ApplicationRecord).filter(ApplicationRecord.file_hash == file_hash).first()
+        if existed:
+            try:
+                Path(file_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise HTTPException(status_code=409, detail="duplicate application")
 
     text_content, extract_error = extract_text(file_path)
     if text_content:
@@ -121,12 +183,14 @@ async def _create_application_record(upload_file: UploadFile, db: Session) -> Ap
         score_status = "extract_failed"
 
     record = ApplicationRecord(
-        student_name="unknown",
-        student_id="unknown",
-        project_title="unknown",
+        uploader_user_id=uploader_user_id,
+        student_name=(student_name.strip() if isinstance(student_name, str) and student_name.strip() else "unknown"),
+        student_id=(student_id.strip() if isinstance(student_id, str) and student_id.strip() else "unknown"),
+        project_title=(project_title.strip() if isinstance(project_title, str) and project_title.strip() else "unknown"),
         file_name=original_name,
         file_path=file_path,
         file_type=(original_name.rsplit(".", 1)[-1].lower() if "." in original_name else "unknown"),
+        file_hash=file_hash,
         text_extract_status=extract_status,
         text_content=text_content,
         extract_error=extract_error,
@@ -181,16 +245,35 @@ async def _score_record(record: ApplicationRecord, db: Session) -> ScoreInfo:
 
 
 @router.get("", response_model=list[ApplicationSummary])
-def list_applications(db: Session = Depends(get_db)):
-    records = db.query(ApplicationRecord).order_by(ApplicationRecord.updated_at.desc()).all()
+def list_applications(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    query = db.query(ApplicationRecord)
+    if not _is_admin(user):
+        query = query.filter(
+            or_(
+                ApplicationRecord.uploader_user_id == user.id,
+                ApplicationRecord.student_id == user.student_id,
+            )
+        )
+    records = query.order_by(ApplicationRecord.updated_at.desc()).all()
     return [_to_summary(r) for r in records]
 
 
 @router.get("/{application_id}", response_model=ApplicationDetail)
-def get_application(application_id: int, db: Session = Depends(get_db)):
+def get_application(
+    application_id: int,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
     record = db.query(ApplicationRecord).filter(ApplicationRecord.id == application_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Application not found")
+    if not _can_access_record(user, record):
+        raise HTTPException(status_code=403, detail="forbidden")
     return ApplicationDetail(
         application=_build_application_info(record),
         extraction=_build_extraction_info(record),
@@ -199,10 +282,17 @@ def get_application(application_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{application_id}/file")
-def download_application_file(application_id: int, db: Session = Depends(get_db)):
+def download_application_file(
+    application_id: int,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
     record = db.query(ApplicationRecord).filter(ApplicationRecord.id == application_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Application not found")
+    if not _can_access_record(user, record):
+        raise HTTPException(status_code=403, detail="forbidden")
 
     file_path = Path(record.file_path)
     if not file_path.exists():
@@ -211,10 +301,17 @@ def download_application_file(application_id: int, db: Session = Depends(get_db)
 
 
 @router.get("/{application_id}/preview")
-def preview_application_file(application_id: int, db: Session = Depends(get_db)):
+def preview_application_file(
+    application_id: int,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
     record = db.query(ApplicationRecord).filter(ApplicationRecord.id == application_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Application not found")
+    if not _can_access_record(user, record):
+        raise HTTPException(status_code=403, detail="forbidden")
 
     try:
         preview = get_preview_file(record.file_path)
@@ -225,8 +322,25 @@ def preview_application_file(application_id: int, db: Session = Depends(get_db))
 
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload_application(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    record = await _create_application_record(file, db)
+async def upload_application(
+    file: UploadFile = File(...),
+    student_name: str | None = Form(default=None),
+    student_id: str | None = Form(default=None),
+    project_title: str | None = Form(default=None),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    if not student_id:
+        student_id = user.student_id
+    record = await _create_application_record(
+        file,
+        db,
+        uploader_user_id=user.id,
+        student_name=student_name,
+        student_id=student_id,
+        project_title=project_title,
+    )
     return UploadResponse(
         message="Application uploaded successfully",
         application=_build_application_info(record),
@@ -235,7 +349,14 @@ async def upload_application(file: UploadFile = File(...), db: Session = Depends
 
 
 @router.post("/{application_id}/score", response_model=ScoreResponse)
-async def score_application(application_id: int, db: Session = Depends(get_db)):
+async def score_application(
+    application_id: int,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    if not _is_admin(user):
+        raise HTTPException(status_code=403, detail="admin required")
     record = db.query(ApplicationRecord).filter(ApplicationRecord.id == application_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -244,7 +365,14 @@ async def score_application(application_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/score-batch", response_model=BatchScoreResponse)
-async def score_batch(payload: BatchScorePayload, db: Session = Depends(get_db)):
+async def score_batch(
+    payload: BatchScorePayload,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    if not _is_admin(user):
+        raise HTTPException(status_code=403, detail="admin required")
     query = db.query(ApplicationRecord)
     if payload.application_ids:
         records = query.filter(ApplicationRecord.id.in_(payload.application_ids)).order_by(ApplicationRecord.id.asc()).all()
@@ -272,11 +400,22 @@ async def score_batch(payload: BatchScorePayload, db: Session = Depends(get_db))
 
 
 @router.delete("/batch", response_model=BatchDeleteResponse)
-def delete_applications_batch(payload: BatchDeletePayload, db: Session = Depends(get_db)):
+def delete_applications_batch(
+    payload: BatchDeletePayload,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
     if not payload.application_ids:
         raise HTTPException(status_code=400, detail="application_ids is required")
 
     records = db.query(ApplicationRecord).filter(ApplicationRecord.id.in_(payload.application_ids)).all()
+    if not _is_admin(user):
+        allowed = [r for r in records if _can_access_record(user, r)]
+        if len(allowed) != len(records):
+            raise HTTPException(status_code=403, detail="forbidden")
+        records = allowed
+
     deleted_ids: list[int] = []
     for record in records:
         deleted_ids.append(record.id)
