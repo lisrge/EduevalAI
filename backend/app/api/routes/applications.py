@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.base import get_db
 from app.models.application import ApplicationRecord, ScoreResult
+from app.models.group import UserGroup
+from app.models.request import UserChangeRequest
 from app.models.user import User
 from app.schemas.application import (
     ApplicationDetail,
@@ -23,13 +25,16 @@ from app.schemas.application import (
     BatchScoreItem,
     BatchScorePayload,
     BatchScoreResponse,
+    CreateUserRequestPayload,
     ExtractionInfo,
+    MyApplicationStatus,
     ScoreInfo,
     ScoreResponse,
     UploadResponse,
+    UserChangeRequestItem,
 )
 from app.services.auth_service import get_user_by_token
-from app.services.file_service import save_upload_file
+from app.services.file_service import save_upload_file, save_user_file
 from app.services.preview_service import PreviewError, get_preview_file
 from app.services.scoring_service import score_application_text
 from app.services.text_extractor import extract_text
@@ -42,12 +47,15 @@ def _utcnow() -> datetime:
 
 
 def _build_application_info(record: ApplicationRecord) -> ApplicationInfo:
+    group_name = getattr(record, "_group_name", "") or ""
     preview_url = None
     if record.file_type in {"pdf", "docx"}:
         preview_url = f"/api/applications/{record.id}/preview"
 
     return ApplicationInfo(
         id=record.id,
+        group_id=record.group_id,
+        group_name=group_name,
         student_name=record.student_name,
         student_id=record.student_id,
         project_title=record.project_title,
@@ -89,19 +97,37 @@ def _build_score_info(score: ScoreResult | None) -> ScoreInfo | None:
     )
 
 
+def _build_request_item(row: UserChangeRequest) -> UserChangeRequestItem:
+    return UserChangeRequestItem(
+        id=row.id,
+        request_type=row.request_type,
+        status=row.status,
+        request_note=row.request_note or "",
+        file_name=row.file_name or "",
+        review_note=row.review_note or "",
+        reviewed_by_admin_id=row.reviewed_by_admin_id,
+        reviewed_at=row.reviewed_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 def _to_summary(record: ApplicationRecord) -> ApplicationSummary:
     score = record.score_result
+    group_name = getattr(record, "_group_name", "") or ""
     preview_url = f"/api/applications/{record.id}/preview" if record.file_type in {"pdf", "docx"} else None
     return ApplicationSummary(
         id=record.id,
+        group_id=record.group_id,
+        group_name=group_name,
         student_name=record.student_name,
         student_id=record.student_id,
         project_title=record.project_title,
         score_status=record.score_status,
-        practicality_score=score.practicality_score if score else 0,
-        innovation_score=score.innovation_score if score else 0,
-        total_score=score.total_score if score else 0,
-        needs_human_review=score.needs_human_review if score else True,
+        practicality_score=score.practicality_score if score else None,
+        innovation_score=score.innovation_score if score else None,
+        total_score=score.total_score if score else None,
+        needs_human_review=score.needs_human_review if score else None,
         updated_at=record.updated_at,
         file_name=record.file_name,
         file_type=record.file_type,
@@ -146,6 +172,28 @@ def _can_access_record(user: User, record: ApplicationRecord) -> bool:
     return False
 
 
+def _pending_request_exists(db: Session, user_id: int, request_type: str) -> bool:
+    return (
+        db.query(UserChangeRequest)
+        .filter(
+            UserChangeRequest.user_id == user_id,
+            UserChangeRequest.request_type == request_type,
+            UserChangeRequest.status == "pending",
+        )
+        .first()
+        is not None
+    )
+
+
+def _attach_group_names(db: Session, records: list[ApplicationRecord]) -> None:
+    group_ids = {record.group_id for record in records if record.group_id}
+    if not group_ids:
+        return
+    mapping = {row.id: row.name for row in db.query(UserGroup).filter(UserGroup.id.in_(group_ids)).all()}
+    for record in records:
+        record._group_name = mapping.get(record.group_id or 0, "")
+
+
 async def _create_application_record(
     upload_file: UploadFile,
     db: Session,
@@ -184,6 +232,7 @@ async def _create_application_record(
 
     record = ApplicationRecord(
         uploader_user_id=uploader_user_id,
+        group_id=None,
         student_name=(student_name.strip() if isinstance(student_name, str) and student_name.strip() else "unknown"),
         student_id=(student_id.strip() if isinstance(student_id, str) and student_id.strip() else "unknown"),
         project_title=(project_title.strip() if isinstance(project_title, str) and project_title.strip() else "unknown"),
@@ -259,7 +308,16 @@ def list_applications(
             )
         )
     records = query.order_by(ApplicationRecord.updated_at.desc()).all()
-    return [_to_summary(r) for r in records]
+    _attach_group_names(db, records)
+    items = [_to_summary(r) for r in records]
+    if _is_admin(user):
+        return items
+    for item in items:
+        item.practicality_score = None
+        item.innovation_score = None
+        item.total_score = None
+        item.needs_human_review = None
+    return items
 
 
 @router.get("/{application_id}", response_model=ApplicationDetail)
@@ -274,10 +332,12 @@ def get_application(
         raise HTTPException(status_code=404, detail="Application not found")
     if not _can_access_record(user, record):
         raise HTTPException(status_code=403, detail="forbidden")
+    _attach_group_names(db, [record])
+    score = _build_score_info(record.score_result) if _is_admin(user) else None
     return ApplicationDetail(
         application=_build_application_info(record),
         extraction=_build_extraction_info(record),
-        score=_build_score_info(record.score_result),
+        score=score,
     )
 
 
@@ -331,6 +391,21 @@ async def upload_application(
     db: Session = Depends(get_db),
 ):
     user = _current_user(authorization, db)
+    if not _is_admin(user):
+        student_id = user.student_id
+    has_existing = (
+        db.query(ApplicationRecord)
+        .filter(
+            or_(
+                ApplicationRecord.uploader_user_id == user.id,
+                ApplicationRecord.student_id == user.student_id,
+            )
+        )
+        .first()
+        is not None
+    )
+    if has_existing and not user.application_reupload_allowed:
+        raise HTTPException(status_code=403, detail="application already uploaded; request admin approval before reupload")
     if not student_id:
         student_id = user.student_id
     record = await _create_application_record(
@@ -341,6 +416,15 @@ async def upload_application(
         student_id=student_id,
         project_title=project_title,
     )
+    record.group_id = user.group_id
+    db.commit()
+    db.refresh(record)
+    if user.group_id:
+        group = db.query(UserGroup).filter(UserGroup.id == user.group_id).first()
+        record._group_name = group.name if group else ""
+    if user.application_reupload_allowed:
+        user.application_reupload_allowed = False
+        db.commit()
     return UploadResponse(
         message="Application uploaded successfully",
         application=_build_application_info(record),
@@ -433,3 +517,110 @@ def delete_applications_batch(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return BatchDeleteResponse(message="Batch delete completed", deleted_ids=deleted_ids)
+
+
+@router.get("/me/status", response_model=MyApplicationStatus)
+def my_application_status(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    has_application = (
+        db.query(ApplicationRecord)
+        .filter(
+            or_(
+                ApplicationRecord.uploader_user_id == user.id,
+                ApplicationRecord.student_id == user.student_id,
+            )
+        )
+        .first()
+        is not None
+    )
+    return MyApplicationStatus(
+        has_application=has_application,
+        application_reupload_allowed=bool(user.application_reupload_allowed),
+        pending_reupload_request=_pending_request_exists(db, user.id, "application_reupload"),
+        pending_signature_request=_pending_request_exists(db, user.id, "signature_update"),
+    )
+
+
+@router.get("/me/requests", response_model=list[UserChangeRequestItem])
+def list_my_requests(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    rows = (
+        db.query(UserChangeRequest)
+        .filter(UserChangeRequest.user_id == user.id)
+        .order_by(UserChangeRequest.created_at.desc())
+        .all()
+    )
+    return [_build_request_item(row) for row in rows]
+
+
+@router.post("/me/reupload-request", response_model=UserChangeRequestItem)
+def create_reupload_request(
+    payload: CreateUserRequestPayload,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    has_application = (
+        db.query(ApplicationRecord)
+        .filter(
+            or_(
+                ApplicationRecord.uploader_user_id == user.id,
+                ApplicationRecord.student_id == user.student_id,
+            )
+        )
+        .first()
+        is not None
+    )
+    if not has_application:
+        raise HTTPException(status_code=400, detail="no application uploaded yet")
+    if user.application_reupload_allowed:
+        raise HTTPException(status_code=400, detail="reupload already approved")
+    if _pending_request_exists(db, user.id, "application_reupload"):
+        raise HTTPException(status_code=409, detail="reupload request already pending")
+    row = UserChangeRequest(
+        user_id=user.id,
+        request_type="application_reupload",
+        status="pending",
+        request_note=(payload.request_note or "").strip(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _build_request_item(row)
+
+
+@router.post("/me/signature-request", response_model=UserChangeRequestItem)
+async def create_signature_request(
+    signature: UploadFile = File(...),
+    request_note: str | None = Form(default=None),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    if _pending_request_exists(db, user.id, "signature_update"):
+        raise HTTPException(status_code=409, detail="signature request already pending")
+    content_type = (signature.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="signature must be an image")
+    try:
+        file_path, file_name = await save_user_file(signature, "pending_signatures")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    row = UserChangeRequest(
+        user_id=user.id,
+        request_type="signature_update",
+        status="pending",
+        request_note=(request_note or "").strip(),
+        file_name=file_name,
+        file_path=file_path,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _build_request_item(row)

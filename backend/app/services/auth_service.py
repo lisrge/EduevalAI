@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import os
 import re
+import base64
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -43,8 +44,11 @@ def verify_password(password: str, salt_hex: str, expected_hash: str) -> bool:
     return hmac.compare_digest(actual, expected_hash)
 
 
-async def create_user(db: Session, student_id: str, password: str, signature: UploadFile) -> User:
+async def create_user(db: Session, student_id: str, real_name: str, password: str, signature: UploadFile) -> User:
     student_id = validate_student_id(student_id)
+    real_name = (real_name or "").strip()
+    if not real_name:
+        raise HTTPException(status_code=400, detail="real_name is required")
     if not signature:
         raise HTTPException(status_code=400, detail="signature is required")
 
@@ -76,11 +80,61 @@ async def create_user(db: Session, student_id: str, password: str, signature: Up
 
     user = User(
         student_id=student_id,
+        real_name=real_name,
         password_salt=salt,
         password_hash=pwd_hash,
         role="user",
         is_root_admin=False,
         signature_file_name=safe_name,
+        signature_path=str(target_path),
+        created_at=datetime.utcnow(),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    root_exists = db.query(User).filter(User.is_root_admin == True).count()
+    if root_exists == 0:
+        first = db.query(User).order_by(User.id.asc()).first()
+        if first and first.id == user.id:
+            user.role = "admin"
+            user.is_root_admin = True
+            db.commit()
+            db.refresh(user)
+    return user
+
+
+def create_user_basic(db: Session, student_id: str, real_name: str, password: str) -> User:
+    student_id = validate_student_id(student_id)
+    real_name = (real_name or "").strip()
+    if not real_name:
+        raise HTTPException(status_code=400, detail="real_name is required")
+
+    existing = db.query(User).filter(User.student_id == student_id).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="student_id already exists")
+
+    settings = get_settings()
+    signature_dir = settings.storage_path / "signatures"
+    signature_dir.mkdir(parents=True, exist_ok=True)
+
+    png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/er8x+AAAAAASUVORK5CYII="
+    data = base64.b64decode(png_base64)
+
+    file_id = uuid4().hex
+    target_path = signature_dir / f"{file_id}.png"
+    target_path.write_bytes(data)
+
+    salt = os.urandom(16).hex()
+    pwd_hash = _hash_password(password, salt)
+
+    user = User(
+        student_id=student_id,
+        real_name=real_name,
+        password_salt=salt,
+        password_hash=pwd_hash,
+        role="user",
+        is_root_admin=False,
+        signature_file_name="signature.png",
         signature_path=str(target_path),
         created_at=datetime.utcnow(),
     )

@@ -95,6 +95,18 @@ html, body, #app {
   background-color: var(--surface) !important;
 }
 
+.theme-dark .bg-white\/80 {
+  background-color: var(--surface-soft) !important;
+}
+
+.theme-dark .border-\[\#f1f5f9\] {
+  border-color: var(--border) !important;
+}
+
+.theme-dark .border-gray-100 {
+  border-color: var(--border) !important;
+}
+
 .theme-dark .text-text-primary {
   color: var(--text-primary) !important;
 }

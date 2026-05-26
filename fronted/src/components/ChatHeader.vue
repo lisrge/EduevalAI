@@ -48,6 +48,33 @@
           @click.stop
         >
           <button
+            v-if="!authStore.isTeacher"
+            type="button"
+            class="ghost-button"
+            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
+            @click="goWorkbench"
+          >
+            工作台
+          </button>
+          <button
+            v-if="!authStore.isTeacher"
+            type="button"
+            class="ghost-button"
+            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
+            @click="goHomework"
+          >
+            交作业
+          </button>
+          <button
+            v-if="authStore.isTeacher"
+            type="button"
+            class="ghost-button"
+            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
+            @click="goTeacherReviews"
+          >
+            教师评分端
+          </button>
+          <button
             type="button"
             class="ghost-button"
             style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
@@ -93,6 +120,7 @@ const displayName = computed(() => authStore.user?.student_id || '未登录');
 const displayRole = computed(() => {
   if (!authStore.user) return 'Guest';
   if (authStore.isAdmin) return 'Admin';
+  if (authStore.isTeacher) return 'Teacher';
   return 'Student';
 });
 
@@ -126,6 +154,21 @@ onBeforeUnmount(() => {
 function goProfile() {
   closeMenu();
   router.push({ name: 'profile' });
+}
+
+function goWorkbench() {
+  closeMenu();
+  router.push({ name: 'workbench' });
+}
+
+function goHomework() {
+  closeMenu();
+  router.push({ name: 'homework' });
+}
+
+function goTeacherReviews() {
+  closeMenu();
+  router.push({ name: 'teacher-reviews' });
 }
 
 function goAdmin() {

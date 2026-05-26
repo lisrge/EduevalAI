@@ -2,8 +2,10 @@
   <section class="panel edueval-panel-fill" style="align-self: stretch;">
     <div class="panel-header">
       <div>
-        <h2>评分详情</h2>
-        <p class="panel-subtitle">项目实用性 60 分 + 项目创新性 40 分</p>
+        <h2>{{ allowScoring ? '评分详情' : '申请书详情' }}</h2>
+        <p class="panel-subtitle">
+          {{ allowScoring ? '管理员可查看评分与复核信息' : '学生仅可查看自己的申请书基础信息与处理状态' }}
+        </p>
       </div>
       <button
         v-if="item && allowScoring"
@@ -19,18 +21,16 @@
       <div v-if="loading" class="empty-state">加载详情中...</div>
       <div v-else-if="!item" class="empty-state">请选择一份申请书查看详情。</div>
       <div v-else class="detail-stack">
-        <p v-if="item.error" class="feedback error">
-          {{ item.error }}
-        </p>
+        <p v-if="item.error" class="feedback error">{{ item.error }}</p>
 
         <section class="detail-block">
           <h3>申请信息</h3>
           <dl class="detail-grid">
-            <div>
+            <div v-if="allowScoring">
               <dt>学生</dt>
               <dd>{{ (item.application?.student_name || item.detail?.application?.student_name) ?? '-' }}</dd>
             </div>
-            <div>
+            <div v-if="allowScoring">
               <dt>学号</dt>
               <dd>{{ (item.application?.student_id || item.detail?.application?.student_id) ?? '-' }}</dd>
             </div>
@@ -49,11 +49,16 @@
           <h3>状态</h3>
           <div style="display: flex; gap: 10px; flex-wrap: wrap;">
             <span :class="['badge', uploadBadge(item.uploadStatus)]">上传：{{ uploadLabel(item.uploadStatus) }}</span>
-            <span :class="['badge', scoreBadge(item.scoreStatus)]">评分：{{ scoreLabel(item.scoreStatus) }}</span>
+            <span v-if="allowScoring" :class="['badge', scoreBadge(item.scoreStatus)]">评分：{{ scoreLabel(item.scoreStatus) }}</span>
           </div>
         </section>
 
         <section class="detail-block">
+          <h3>文本提取</h3>
+          <p>{{ item?.detail?.extraction?.status || item?.extraction?.status || '-' }}</p>
+        </section>
+
+        <section v-if="allowScoring" class="detail-block">
           <h3>AI 评分结果</h3>
           <div v-if="!resolvedScore" class="empty-inline">尚未评分。</div>
           <template v-else>
@@ -81,17 +86,14 @@
               <h4>实用性理由</h4>
               <p>{{ resolvedScore.practicality_reason }}</p>
             </div>
-
             <div v-if="resolvedScore.innovation_reason" class="reason-block">
               <h4>创新性理由</h4>
               <p>{{ resolvedScore.innovation_reason }}</p>
             </div>
-
             <div v-if="resolvedScore.strengths" class="reason-block">
               <h4>优点</h4>
               <p>{{ resolvedScore.strengths }}</p>
             </div>
-
             <div v-if="resolvedScore.weaknesses" class="reason-block">
               <h4>不足</h4>
               <p>{{ resolvedScore.weaknesses }}</p>
@@ -123,9 +125,7 @@ const props = defineProps({
 
 defineEmits(['score']);
 
-const resolvedScore = computed(() => {
-  return props.item?.detail?.score || props.item?.score || null;
-});
+const resolvedScore = computed(() => props.item?.detail?.score || props.item?.score || null);
 
 function uploadLabel(status) {
   if (status === 'queued') return '排队';
@@ -148,7 +148,6 @@ function uploadBadge(status) {
   if (status === 'uploaded') return 'ok';
   if (status === 'failed') return 'error';
   if (status === 'uploading') return 'info';
-  if (status === 'queued') return 'neutral';
   return 'neutral';
 }
 
@@ -156,8 +155,6 @@ function scoreBadge(status) {
   if (status === 'scored') return 'ok';
   if (status === 'failed') return 'error';
   if (status === 'scoring') return 'info';
-  if (status === 'queued') return 'neutral';
-  if (status === 'idle') return 'neutral';
   return 'neutral';
 }
 </script>

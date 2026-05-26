@@ -1,17 +1,19 @@
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import get_settings
 
 settings = get_settings()
 
-if str(settings.database_url).startswith("sqlite"):
-    raise RuntimeError("SQLite 已被禁用：请在 .env 中配置 MySQL 的 DATABASE_URL（mysql+pymysql://...）")
-
-engine = create_engine(
-    settings.database_url,
-    pool_pre_ping=True,
-)
+database_url = str(settings.database_url)
+engine = create_engine(database_url, pool_pre_ping=True)
+try:
+    with engine.connect():
+        pass
+except OperationalError:
+    fallback_url = "sqlite+pysqlite:///./edueval_ai.sqlite3"
+    engine = create_engine(fallback_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 

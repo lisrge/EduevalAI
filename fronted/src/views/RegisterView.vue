@@ -16,6 +16,10 @@
             <input v-model="studentId" type="text" inputmode="numeric" autocomplete="username" />
           </div>
           <div class="field" style="margin-bottom: 12px;">
+            <span>姓名</span>
+            <input v-model="realName" type="text" autocomplete="name" />
+          </div>
+          <div class="field" style="margin-bottom: 12px;">
             <span>密码</span>
             <input v-model="password" type="password" autocomplete="new-password" />
           </div>
@@ -54,6 +58,7 @@ const authStore = useAuthStore();
 const router = useRouter();
 
 const studentId = ref('');
+const realName = ref('');
 const password = ref('');
 const signatureFile = ref(null);
 const fileRef = ref(null);
@@ -69,6 +74,7 @@ function onFileChange(event) {
 function validate() {
   const sid = String(studentId.value || '').trim();
   if (!/^\d{12}$/.test(sid)) return '学号必须为 12 位纯数字';
+  if (!String(realName.value || '').trim()) return '请输入姓名';
   if (!signatureFile.value) return '请上传电子签名图片';
   if (!String(signatureFile.value.type || '').startsWith('image/')) return '电子签名必须为图片格式';
   return null;
@@ -81,6 +87,7 @@ async function submit() {
   try {
     await authStore.register({
       studentId: String(studentId.value || '').trim(),
+      realName: String(realName.value || '').trim(),
       password: String(password.value || ''),
       signatureFile: signatureFile.value,
     });

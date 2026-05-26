@@ -39,6 +39,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => Boolean(token.value) && Boolean(user.value));
   const isAdmin = computed(() => String(user.value?.role || '').toLowerCase() === 'admin');
+  const isTeacher = computed(() => String(user.value?.role || '').toLowerCase() === 'teacher');
+  const isStaff = computed(() => isAdmin.value || isTeacher.value);
 
   async function ensureInitialized() {
     if (initialized.value) return;
@@ -79,11 +81,11 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function register({ studentId, password, signatureFile }) {
+  async function register({ studentId, realName, password, signatureFile }) {
     loading.value = true;
     error.value = null;
     try {
-      const result = await registerUser({ studentId, password, signatureFile });
+      const result = await registerUser({ studentId, realName, password, signatureFile });
       return result;
     } catch (e) {
       error.value = e?.message || String(e);
@@ -116,6 +118,8 @@ export const useAuthStore = defineStore('auth', () => {
     error,
     isAuthenticated,
     isAdmin,
+    isTeacher,
+    isStaff,
     ensureInitialized,
     login,
     register,

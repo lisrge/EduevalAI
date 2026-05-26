@@ -13,6 +13,7 @@ class ApplicationDraft(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("user_groups.id", ondelete="SET NULL"), index=True)
 
     title: Mapped[str] = mapped_column(String(255), default="未命名申请书")
     status: Mapped[str] = mapped_column(String(30), default="draft")
@@ -27,6 +28,7 @@ class TaskDraft(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("user_groups.id", ondelete="SET NULL"), index=True)
 
     title: Mapped[str] = mapped_column(String(255), default="未命名任务书")
     status: Mapped[str] = mapped_column(String(30), default="draft")

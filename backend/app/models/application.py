@@ -14,6 +14,7 @@ class ApplicationRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     uploader_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    group_id: Mapped[Optional[int]] = mapped_column(ForeignKey("user_groups.id", ondelete="SET NULL"), index=True)
     student_name: Mapped[str] = mapped_column(String(100), default="unknown")
     student_id: Mapped[str] = mapped_column(String(50), default="unknown", index=True)
     project_title: Mapped[str] = mapped_column(String(255), default="unknown")

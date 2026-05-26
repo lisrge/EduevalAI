@@ -12,11 +12,11 @@
         <button v-if="allowScoring" class="ghost-button" type="button" :disabled="selectedIds.length === 0" @click="batchScore">
           批量评分
         </button>
-        <button class="ghost-button danger-outline" type="button" :disabled="selectedIds.length === 0" @click="batchDelete">
+        <button v-if="allowScoring" class="ghost-button danger-outline" type="button" :disabled="selectedIds.length === 0" @click="batchDelete">
           批量删除 ({{ selectedIds.length }})
         </button>
-        <button class="ghost-button" type="button" @click="exportCsv">导出 CSV</button>
-        <button class="ghost-button" type="button" @click="exportXlsx">导出 XLSX</button>
+        <button v-if="allowScoring" class="ghost-button" type="button" @click="exportCsv">导出 CSV</button>
+        <button v-if="allowScoring" class="ghost-button" type="button" @click="exportXlsx">导出 XLSX</button>
         <button class="ghost-button" type="button" :disabled="!canPreview" @click="previewSelected">预览申请书</button>
       </div>
     </div>
@@ -26,96 +26,90 @@
         v-model="searchText"
         class="search-input"
         type="text"
-        placeholder="搜索学生姓名、学号、项目名称"
+        :placeholder="allowScoring ? '搜索学生姓名、学号、项目名' : '搜索我的申请书'"
       />
 
       <div class="pill-row">
         <button type="button" class="pill" :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">
           全部 ({{ tabCounts.all }})
         </button>
-        <button type="button" class="pill" :class="{ active: activeTab === 'scored' }" @click="activeTab = 'scored'">
+        <button v-if="allowScoring" type="button" class="pill" :class="{ active: activeTab === 'scored' }" @click="activeTab = 'scored'">
           已评分 ({{ tabCounts.scored }})
         </button>
-        <button type="button" class="pill" :class="{ active: activeTab === 'review' }" @click="activeTab = 'review'">
+        <button v-if="allowScoring" type="button" class="pill" :class="{ active: activeTab === 'review' }" @click="activeTab = 'review'">
           待复核 ({{ tabCounts.review }})
         </button>
         <button type="button" class="pill" :class="{ active: activeTab === 'extract_failed' }" @click="activeTab = 'extract_failed'">
-          提取失败 ({{ tabCounts.extract_failed }})
+          处理失败 ({{ tabCounts.extract_failed }})
         </button>
       </div>
 
-      <div v-if="firstError" class="alert error">
-        {{ firstError }}
-      </div>
+      <div v-if="firstError" class="alert error">{{ firstError }}</div>
 
       <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="width: 44px;">
-              <input
-                type="checkbox"
-                :checked="allSelected"
-                :indeterminate.prop="someSelected && !allSelected"
-                @click.stop
-                @change="toggleAll($event.target.checked)"
-              />
-            </th>
-            <th>学生</th>
-            <th>项目名称</th>
-            <th>实用性</th>
-            <th>创新性</th>
-            <th>总分</th>
-            <th>上传</th>
-            <th>复核</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="item in filteredItems"
-            :key="item.localId"
-            :class="{ selected: item.localId === selectedLocalId }"
-            @click="$emit('select', item.localId)"
-          >
-            <td>
-              <input type="checkbox" :checked="selectedIdSet.has(item.localId)" @click.stop @change="toggleOne(item.localId, $event.target.checked)" />
-            </td>
-            <td>
-              {{ studentLabel(item) }}
-            </td>
-            <td>
-              {{ projectLabel(item) }}
-            </td>
-            <td>{{ scoreField(item, 'practicality_score') }}</td>
-            <td>{{ scoreField(item, 'innovation_score') }}</td>
-            <td>{{ scoreField(item, 'total_score') }}</td>
-            <td>
-              <span :class="['badge', uploadBadge(item.uploadStatus)]">{{ uploadLabel(item.uploadStatus) }}</span>
-            </td>
-            <td>
-              <span v-if="typeof resolvedScore(item)?.needs_human_review === 'boolean'" :class="['badge', resolvedScore(item).needs_human_review ? 'warn' : 'ok']">
-                {{ resolvedScore(item).needs_human_review ? '需复核' : '正常' }}
-              </span>
-              <span v-else class="empty-inline">-</span>
-            </td>
-            <td>
-              <button
-                v-if="allowScoring"
-                class="table-button"
-                :disabled="item.uploadStatus !== 'uploaded' || item.scoreStatus === 'scoring'"
-                @click.stop="$emit('score', item.localId)"
-              >
-                {{ item.scoreStatus === 'scoring' ? '评分中...' : '评分' }}
-              </button>
-              <span v-else class="empty-inline">-</span>
-            </td>
-          </tr>
-          <tr v-if="filteredItems.length === 0">
-            <td colspan="10" class="empty-state">暂无数据</td>
-          </tr>
-        </tbody>
-      </table>
+        <table>
+          <thead>
+            <tr>
+              <th v-if="allowScoring" style="width: 44px;">
+                <input
+                  type="checkbox"
+                  :checked="allSelected"
+                  :indeterminate.prop="someSelected && !allSelected"
+                  @click.stop
+                  @change="toggleAll($event.target.checked)"
+                />
+              </th>
+              <th>{{ allowScoring ? '学生' : '文件名' }}</th>
+              <th>项目名称</th>
+              <th v-if="allowScoring">实用性</th>
+              <th v-if="allowScoring">创新性</th>
+              <th v-if="allowScoring">总分</th>
+              <th>上传状态</th>
+              <th v-if="allowScoring">复核</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="item in filteredItems"
+              :key="item.localId"
+              :class="{ selected: item.localId === selectedLocalId }"
+              @click="$emit('select', item.localId)"
+            >
+              <td v-if="allowScoring">
+                <input type="checkbox" :checked="selectedIdSet.has(item.localId)" @click.stop @change="toggleOne(item.localId, $event.target.checked)" />
+              </td>
+              <td>{{ primaryLabel(item) }}</td>
+              <td>{{ projectLabel(item) }}</td>
+              <td v-if="allowScoring">{{ scoreField(item, 'practicality_score') }}</td>
+              <td v-if="allowScoring">{{ scoreField(item, 'innovation_score') }}</td>
+              <td v-if="allowScoring">{{ scoreField(item, 'total_score') }}</td>
+              <td>
+                <span :class="['badge', uploadBadge(item.uploadStatus)]">{{ uploadLabel(item.uploadStatus) }}</span>
+              </td>
+              <td v-if="allowScoring">
+                <span v-if="typeof resolvedScore(item)?.needs_human_review === 'boolean'" :class="['badge', resolvedScore(item).needs_human_review ? 'warn' : 'ok']">
+                  {{ resolvedScore(item).needs_human_review ? '需复核' : '正常' }}
+                </span>
+                <span v-else class="empty-inline">-</span>
+              </td>
+              <td>
+                <button
+                  v-if="allowScoring"
+                  class="table-button"
+                  :disabled="item.uploadStatus !== 'uploaded' || item.scoreStatus === 'scoring'"
+                  @click.stop="$emit('score', item.localId)"
+                >
+                  {{ item.scoreStatus === 'scoring' ? '评分中...' : '评分' }}
+                </button>
+                <span v-else class="empty-inline">查看右侧详情</span>
+              </td>
+            </tr>
+            <tr v-if="filteredItems.length === 0">
+              <td :colspan="allowScoring ? 9 : 4" class="empty-state">暂无数据</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </section>
@@ -149,13 +143,7 @@ const selectedIdSet = computed(() => new Set(selectedIds.value));
 const canPreview = computed(() => Boolean(props.selectedLocalId));
 
 const tabCounts = computed(() => {
-  const counts = {
-    all: 0,
-    scored: 0,
-    review: 0,
-    extract_failed: 0,
-  };
-
+  const counts = { all: 0, scored: 0, review: 0, extract_failed: 0 };
   const list = Array.isArray(props.items) ? props.items : [];
   counts.all = list.length;
   list.forEach((item) => {
@@ -165,14 +153,12 @@ const tabCounts = computed(() => {
     if (score?.needs_human_review === true) counts.review += 1;
     if (extractionStatus === 'extract_failed' || item?.uploadStatus === 'failed') counts.extract_failed += 1;
   });
-
   return counts;
 });
 
 const filteredItems = computed(() => {
   const list = Array.isArray(props.items) ? props.items : [];
   const q = String(searchText.value || '').trim().toLowerCase();
-
   return list.filter((item) => {
     const application = item?.detail?.application || item?.application || null;
     const extractionStatus = item?.detail?.extraction?.status || item?.extraction?.status || '';
@@ -211,9 +197,8 @@ const someSelected = computed(() => {
 });
 
 const firstError = computed(() => {
-  const list = filteredItems.value;
-  for (let i = 0; i < list.length; i += 1) {
-    if (list[i]?.error) return String(list[i].error);
+  for (const item of filteredItems.value) {
+    if (item?.error) return String(item.error);
   }
   return '';
 });
@@ -230,11 +215,11 @@ function toggleAll(checked) {
     const next = new Set(selectedIds.value);
     filteredItems.value.forEach(item => next.add(item.localId));
     selectedIds.value = Array.from(next);
-  } else {
-    const next = new Set(selectedIds.value);
-    filteredItems.value.forEach(item => next.delete(item.localId));
-    selectedIds.value = Array.from(next);
+    return;
   }
+  const next = new Set(selectedIds.value);
+  filteredItems.value.forEach(item => next.delete(item.localId));
+  selectedIds.value = Array.from(next);
 }
 
 function refreshList() {
@@ -262,20 +247,18 @@ function exportXlsx() {
 
 function previewSelected() {
   const localId = props.selectedLocalId || filteredItems.value?.[0]?.localId || null;
-  if (!localId) return;
-  emit('preview', localId);
+  if (localId) emit('preview', localId);
 }
 
 function resolvedScore(item) {
   return item?.detail?.score || item?.score || null;
 }
 
-function studentLabel(item) {
+function primaryLabel(item) {
   const application = item?.detail?.application || item?.application || null;
-  if (!application) return '-';
-  const raw = (application.student_name || '').trim();
-  if (!raw || raw.toLowerCase() === 'unknown') return '-';
-  return raw;
+  if (!props.allowScoring) return application?.file_name || item?.fileName || '-';
+  const raw = (application?.student_name || '').trim();
+  return raw && raw.toLowerCase() !== 'unknown' ? raw : '-';
 }
 
 function projectLabel(item) {
@@ -286,8 +269,7 @@ function projectLabel(item) {
 function scoreField(item, key) {
   const score = resolvedScore(item);
   const value = score?.[key];
-  if (value === 0) return 0;
-  return value || '-';
+  return value === 0 ? 0 : (value || '-');
 }
 
 function uploadLabel(status) {
@@ -302,7 +284,6 @@ function uploadBadge(status) {
   if (status === 'uploaded') return 'ok';
   if (status === 'failed') return 'error';
   if (status === 'uploading') return 'info';
-  if (status === 'queued') return 'neutral';
   return 'neutral';
 }
 </script>

@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 class ApplicationInfo(BaseModel):
     id: int
+    group_id: int | None = None
+    group_name: str = ""
     student_name: str
     student_id: str
     project_title: str
@@ -20,14 +22,16 @@ class ApplicationInfo(BaseModel):
 
 class ApplicationSummary(BaseModel):
     id: int
+    group_id: int | None = None
+    group_name: str = ""
     student_name: str
     student_id: str
     project_title: str
     score_status: str
-    practicality_score: int
-    innovation_score: int
-    total_score: int
-    needs_human_review: bool
+    practicality_score: int | None = None
+    innovation_score: int | None = None
+    total_score: int | None = None
+    needs_human_review: bool | None = None
     updated_at: datetime
     file_name: Optional[str] = None
     file_type: Optional[str] = None
@@ -62,6 +66,35 @@ class ApplicationDetail(BaseModel):
     application: ApplicationInfo
     extraction: ExtractionInfo
     score: Optional[ScoreInfo] = None
+
+
+class MyApplicationStatus(BaseModel):
+    has_application: bool
+    application_reupload_allowed: bool
+    pending_reupload_request: bool
+    pending_signature_request: bool
+
+
+class CreateUserRequestPayload(BaseModel):
+    request_note: str = ""
+
+
+class UserChangeRequestItem(BaseModel):
+    id: int
+    request_type: str
+    status: str
+    request_note: str = ""
+    file_name: str = ""
+    review_note: str = ""
+    reviewed_by_admin_id: int | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminUserChangeRequestItem(UserChangeRequestItem):
+    user_id: int
+    student_id: str
 
 
 class UploadResponse(BaseModel):
@@ -101,4 +134,3 @@ class BatchDeletePayload(BaseModel):
 class BatchDeleteResponse(BaseModel):
     message: str
     deleted_ids: list[int]
-

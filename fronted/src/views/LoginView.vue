@@ -74,7 +74,9 @@ async function submit() {
       password: String(password.value || ''),
       remember: Boolean(rememberMe.value),
     });
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/';
+    const redirect = typeof route.query.redirect === 'string'
+      ? route.query.redirect
+      : (authStore.isAdmin ? '/admin/users' : '/');
     router.replace(redirect);
   } catch (e) {
     localError.value = e?.message || '登录失败';

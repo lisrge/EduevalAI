@@ -49,6 +49,7 @@ def _current_user(authorization: str | None, db: Session):
 def _summary_from_row(row) -> DraftSummary:
     return DraftSummary(
         id=row.id,
+        group_id=row.group_id,
         title=row.title,
         status=row.status,
         created_at=row.created_at,
@@ -95,6 +96,7 @@ def create_application_draft(
     user = _current_user(authorization, db)
     row = ApplicationDraft(
         user_id=user.id,
+        group_id=user.group_id,
         title=(payload.title or "未命名申请书").strip() or "未命名申请书",
         status="draft",
         content_json=dumps_content(payload.content),
@@ -184,6 +186,7 @@ def create_task_draft(
     user = _current_user(authorization, db)
     row = TaskDraft(
         user_id=user.id,
+        group_id=user.group_id,
         title=(payload.title or "未命名任务书").strip() or "未命名任务书",
         status="draft",
         content_json=dumps_content(payload.content),

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 class DraftSummary(BaseModel):
     id: int
+    group_id: int | None = None
     title: str
     status: str
     created_at: datetime
