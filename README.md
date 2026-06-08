@@ -12,7 +12,6 @@ EduEvalAI 是一个教学项目材料管理与评审系统，当前包含：
 
 - 后端：`http://127.0.0.1:8001`（API 前缀 `/api`）
 - Vue 前端：`http://localhost:8080`
-- Flutter Web（可选）：`http://localhost:8090`
 
 ### 1) 后端启动
 
@@ -36,22 +35,7 @@ npm run serve -- --port 8080
 ```
 
 ### 3) Flutter Web（可选，教师独立端）
-
-此项目默认放在仓库同级目录（不是本仓库子目录）：
-
-```text
-../teacher_flutter_web
-```
-
-启动示例：
-
-```bash
-cd ../teacher_flutter_web
-flutter pub get
-flutter run -d chrome --web-port 8090
-```
-
-如果 Flutter Web 访问后端出现 `net::ERR_FAILED`，检查 `backend/.env` 的 `CORS_ORIGINS` 是否包含 `http://localhost:8090`。
+教师评分仅保留 Vue 前端内置页面（`/teacher/reviews`），不再维护 Flutter 端。
 
 ## 目录结构
 
@@ -99,7 +83,7 @@ backend/.env
 
 ```env
 DATABASE_URL=mysql+pymysql://root:123456@127.0.0.1:3306/edueval_ai?charset=utf8mb4
-CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:8090,http://127.0.0.1:8090
+CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
 BLOG_CDP_URL=http://127.0.0.1:9222
 BLOG_LAUNCH_CHROME=false
 ```
@@ -132,7 +116,6 @@ BLOG_LAUNCH_CHROME=false
 入口：
 
 - Vue 前端：`/teacher/reviews`（移动端样式，顶部支持退出登录）
-- Flutter Web（可选）：按你的 Flutter 项目实现为准
 
 评分流程：
 
@@ -165,16 +148,7 @@ BLOG_LAUNCH_CHROME=false
 
 ## 常见问题
 
-### 1) Flutter Web 调用后端报 `net::ERR_FAILED`
-
-原因多半是跨域（CORS）未放行 `http://localhost:8090`。
-
-处理：
-
-- 在 `backend/.env` 的 `CORS_ORIGINS` 加上 `http://localhost:8090,http://127.0.0.1:8090`
-- 重启后端
-
-### 2) 老师登录后提示 `staff required`
+### 1) 老师登录后提示 `staff required`
 
 含义：当前账号不是 `teacher/admin`。
 
@@ -182,7 +156,7 @@ BLOG_LAUNCH_CHROME=false
 
 - 管理员到 `/admin/users` 把该账号角色改为 `teacher`（初始管理员不可降级）
 
-### 3) 博客抓取提示缺少 playwright
+### 2) 博客抓取提示缺少 playwright
 
 如果你需要启用博客抓取：
 
