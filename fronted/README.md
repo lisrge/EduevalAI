@@ -1,24 +1,34 @@
-# fronted
+# fronted（Vue 前端）
 
-## Project setup
-```
+默认开发端口：`http://localhost:8080`
+
+## 安装依赖
+
+```bash
 npm install
 ```
 
-### Compiles and hot-reloads for development
-```
-npm run serve
+## 开发启动（热更新）
+
+```bash
+npm run serve -- --port 8080
 ```
 
-### Compiles and minifies for production
-```
+## 构建
+
+```bash
 npm run build
 ```
 
-### Lints and fixes files
-```
+## Lint
+
+```bash
 npm run lint
 ```
 
-### Customize configuration
-See [Configuration Reference](https://cli.vuejs.org/config/).
+## 主要入口
+
+- 登录页：`/login`
+- 学生交作业：`/homework`（需要学生账号，老师会被拦截到评分页）
+- 教师评分端（移动样式）：`/teacher/reviews`（需要 teacher/admin）
+- 管理后台：`/admin/users`、`/admin/submissions`（需要 admin）
