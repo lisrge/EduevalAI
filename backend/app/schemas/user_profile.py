@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ProfileResponse(BaseModel):
@@ -50,6 +50,7 @@ class AdminUserListItem(BaseModel):
     pending_signature_request_count: int = 0
     application_draft_count: int = 0
     task_draft_count: int = 0
+    gitee_url: str = ""
 
 
 class UpdateUserRolePayload(BaseModel):
@@ -71,6 +72,7 @@ class BlogItem(BaseModel):
     url: str
     status: str
     source: str = "csdn"
+    summary: str = ""
     published_at: datetime | None = None
     capture_status: str = "pending"
     review_status: str = "pending"
@@ -148,6 +150,42 @@ class BlogReviewResponse(BaseModel):
     reviewed_by_admin_id: int | None = None
 
 
+class BlogReevaluatePayload(BaseModel):
+    blog_ids: list[int]
+
+
+class BlogReevaluateItem(BaseModel):
+    id: int
+    user_id: int
+    category: str
+    is_project_training: bool = False
+    is_mostly_code: bool = False
+    is_popular_science: bool = False
+    work_item_count: int = 0
+
+
+class BlogReevaluateResponse(BaseModel):
+    total: int = 0
+    updated: int = 0
+    users: int = 0
+    category_counts: dict[str, int] = Field(default_factory=dict)
+    items: list[BlogReevaluateItem] = Field(default_factory=list)
+
+
+class BlogUserSummaryResponse(BaseModel):
+    user_id: int
+    post_count: int = 0
+    project_post_count: int = 0
+    code_dump_count: int = 0
+    popular_science_count: int = 0
+    recent_eight_span_days: int | None = None
+    latest_published_at: datetime | None = None
+    earliest_published_at: datetime | None = None
+    risk_flags: list[str] = Field(default_factory=list)
+    summary_text: str = ""
+    work_items: list[str] = Field(default_factory=list)
+
+
 class AdminRequestReviewPayload(BaseModel):
     status: str
     review_note: str = ""
@@ -163,17 +201,20 @@ class GroupItem(BaseModel):
     leader_project_title: str = ""
     member_count: int = 0
     description: str = ""
+    repo_url: str | None = None
 
 
 class GroupCreatePayload(BaseModel):
     group_number: int
     leader_student_id: str = ""
     description: str = ""
+    repo_url: str | None = None
 
 
 class GroupUpdatePayload(BaseModel):
     leader_student_id: str = ""
     description: str = ""
+    repo_url: str | None = None
 
 
 class GroupBootstrapPayload(BaseModel):

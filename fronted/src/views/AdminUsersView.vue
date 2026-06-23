@@ -22,6 +22,10 @@
       </section>
 
       <div v-if="errorMessage" class="alert error">{{ errorMessage }}</div>
+      <div v-if="successMessage" class="alert" style="color: #166534;">{{ successMessage }}</div>
+      <div style="display: flex; justify-content: flex-end;">
+        <button class="primary-button" type="button" style="width: auto;" @click="router.push({ name: 'admin-document-import' })">批量导入申请书/任务书</button>
+      </div>
 
       <section class="stats-grid">
         <article class="stat-card">
@@ -123,6 +127,7 @@
                 <th>学号</th>
                 <th>分组</th>
                 <th>博客主页</th>
+                <th>Gitee仓库</th>
                 <th>抓取状态</th>
                 <th>用户申请</th>
                 <th>博客统计</th>
@@ -166,6 +171,10 @@
                       编辑
                     </button>
                   </div>
+                </td>
+                <td>
+                  <a v-if="u.gitee_url" :href="u.gitee_url" target="_blank" class="origin-link" style="font-size:12px;">{{ u.gitee_url.split('/').pop() || 'Gitee' }}</a>
+                  <span v-else style="color:#999;font-size:12px;">-</span>
                 </td>
                 <td>
                   <div class="inline-stack">
@@ -451,6 +460,7 @@ const crawlingId = ref(null);
 const batchCrawling = ref(false);
 const selectedCrawlUserIds = ref([]);
 const localError = ref('');
+const successMessage = ref('');
 
 const filters = ref({
   keyword: '',
@@ -537,16 +547,20 @@ function roleLabel(role) {
 
 function crawlStatusLabel(status) {
   const v = String(status || '').toLowerCase();
+  if (v === 'queued') return '排队中';
   if (v === 'running') return '抓取中';
   if (v === 'success') return '成功';
+  if (v === 'partial_success') return '部分失败';
   if (v === 'failed') return '失败';
   return '空闲';
 }
 
 function crawlStatusColor(status) {
   const v = String(status || '').toLowerCase();
+  if (v === 'queued') return '#7c3aed';
   if (v === 'running') return '#2563eb';
   if (v === 'success') return '#16a34a';
+  if (v === 'partial_success') return '#d97706';
   if (v === 'failed') return '#ef4444';
   return 'var(--text-secondary)';
 }
@@ -849,6 +863,7 @@ async function submitRequestReview() {
 }
 
 async function crawlBlogs(user) {
+  successMessage.value = '';
   if (!user?.blog_home_url) {
     localError.value = '该用户未配置博客主页地址';
     return;
@@ -856,6 +871,8 @@ async function crawlBlogs(user) {
   crawlingId.value = user.id;
   try {
     await adminTriggerUserBlogCrawl(authStore.token, user.id);
+    localError.value = '';
+    successMessage.value = '已加入后台抓取队列，可在博客抓取记录中查看进度。';
     await loadUsers();
   } catch (e) {
     localError.value = e?.message || '抓取失败';
@@ -866,10 +883,12 @@ async function crawlBlogs(user) {
 
 async function crawlSelectedUsers() {
   if (!selectedCrawlUsers.value.length) return;
+  successMessage.value = '';
   batchCrawling.value = true;
   localError.value = '';
   try {
-    await adminTriggerBatchBlogCrawl(authStore.token, selectedCrawlUsers.value.map(item => item.id));
+    const runs = await adminTriggerBatchBlogCrawl(authStore.token, selectedCrawlUsers.value.map(item => item.id));
+    successMessage.value = `已加入后台抓取队列：${runs?.length || 0} 个用户，可在博客抓取记录中查看进度。`;
     await loadUsers();
   } catch (e) {
     localError.value = e?.message || '批量抓取失败';

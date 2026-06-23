@@ -92,6 +92,24 @@
             后台管理
           </button>
           <button
+            v-if="authStore.isAdmin"
+            type="button"
+            class="ghost-button"
+            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
+            @click="goBlogQuality"
+          >
+            博客质量总览
+          </button>
+          <button
+            v-if="authStore.isAdmin"
+            type="button"
+            class="ghost-button"
+            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
+            @click="goRepoOverview"
+          >
+            Gitee总览
+          </button>
+          <button
             type="button"
             class="ghost-button"
             style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; background: transparent;"
@@ -174,6 +192,16 @@ function goTeacherReviews() {
 function goAdmin() {
   closeMenu();
   router.push({ name: 'admin-users' });
+}
+
+function goBlogQuality() {
+  closeMenu();
+  router.push({ name: 'admin-blog-overview' });
+}
+
+function goRepoOverview() {
+  closeMenu();
+  router.push({ name: 'admin-repo-overview' });
 }
 
 async function doLogout() {

@@ -39,6 +39,9 @@
             纯代码倾向 {{ item.blog_code_dump_count }} / 科普 {{ item.blog_popular_science_count }}
           </div>
           <div>{{ item.summary_text }}</div>
+          <ul v-if="item.work_items?.length" style="margin: 0; padding-left: 20px; line-height: 1.7;">
+            <li v-for="workItem in item.work_items" :key="workItem">{{ workItem }}</li>
+          </ul>
           <div class="form-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
             <button class="ghost-button" type="button" style="width: auto;" @click="goStudentView(item)">查看竖屏页</button>
           </div>

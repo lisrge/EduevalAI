@@ -6,13 +6,13 @@
         <div class="panel-header" style="margin-bottom: 10px;">
           <div>
             <h2 style="margin: 0;">登录</h2>
-            <p class="panel-subtitle">使用 12 位学号与密码登录。</p>
+            <p class="panel-subtitle">使用账号与密码登录。</p>
           </div>
         </div>
 
         <div class="edueval-panel-body" style="overflow: visible;">
           <div class="field" style="margin-bottom: 12px;">
-            <span>学号（12 位数字）</span>
+            <span>账号</span>
             <input v-model="studentId" type="text" inputmode="numeric" autocomplete="username" />
           </div>
           <div class="field" style="margin-bottom: 12px;">
@@ -60,7 +60,8 @@ const errorMessage = computed(() => localError.value || authStore.error);
 
 function validate() {
   const sid = String(studentId.value || '').trim();
-  if (!/^\d{12}$/.test(sid)) return '学号必须为 12 位纯数字';
+  if (!sid) return '请输入账号';
+  if (sid.length > 50) return '账号不能超过50位';
   return null;
 }
 

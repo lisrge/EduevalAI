@@ -112,6 +112,9 @@
               </div>
               <div class="member-meta">{{ member.student_id }} · {{ member.project_role || '未填写角色' }} · {{ member.contribution_source }}</div>
               <p>{{ member.summary_text }}</p>
+              <ul v-if="member.work_items?.length" class="member-work-items">
+                <li v-for="item in member.work_items" :key="item">{{ item }}</li>
+              </ul>
             </article>
           </section>
 
@@ -456,6 +459,12 @@ onMounted(() => {
 .aggregate-card,
 .meta-card,
 .member-card,
+.member-work-items {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  line-height: 1.6;
+}
+
 .score-panel {
   background: #fffdf8;
   border: 1px solid rgba(245, 158, 11, 0.18);

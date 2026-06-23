@@ -15,13 +15,13 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.user import User, UserSession
 
-STUDENT_ID_PATTERN = re.compile(r"^\d{12}$")
+STUDENT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]{1,50}$")
 
 
 def validate_student_id(student_id: str) -> str:
     sid = (student_id or "").strip()
     if not STUDENT_ID_PATTERN.match(sid):
-        raise HTTPException(status_code=400, detail="student_id must be 12 digits")
+        raise HTTPException(status_code=400, detail="账号必须为1-50位字母、数字、下划线或连字符")
     return sid
 
 

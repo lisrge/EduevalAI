@@ -71,6 +71,12 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresAdmin: true },
     },
     {
+      path: '/admin/document-import',
+      name: 'admin-document-import',
+      component: () => import('../views/AdminDocumentImportView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
       path: '/admin/submissions',
       name: 'admin-submissions',
       component: () => import('../views/AdminSubmissionsView.vue'),
@@ -80,6 +86,12 @@ const router = createRouter({
       path: '/admin/submissions/:submissionId/repo',
       name: 'admin-repo-progress',
       component: () => import('../views/AdminRepoProgressView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
+      path: '/admin/repo-overview',
+      name: 'admin-repo-overview',
+      component: () => import('../views/AdminRepoOverviewView.vue'),
       meta: { requiresAuth: true, requiresAdmin: true },
     },
     {

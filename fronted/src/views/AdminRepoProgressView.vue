@@ -97,7 +97,7 @@
           </div>
 
           <div class="panel-subtitle">
-            匹配结果：{{ member.matched_commit_count }} commits，+{{ member.matched_additions }} / -{{ member.matched_deletions }}
+            匹配结果：{{ member.matched_commit_count }} commits，+{{ member.matched_additions }} / -{{ member.matched_deletions }}，涉及 {{ member.matched_changed_files }} 个文件
           </div>
           <div class="panel-subtitle">
             活跃周次：{{ member.matched_weeks?.join(', ') || '暂无' }}
@@ -123,28 +123,63 @@
       <section class="panel" style="display: grid; gap: 12px;">
         <div style="font-weight: 700;">每周进度统计</div>
         <div v-if="weeklyStats.length === 0" class="panel-subtitle">当前没有同步到 commit 数据。</div>
-        <table v-else style="width: 100%; border-collapse: collapse;">
-          <thead>
-            <tr style="text-align: left; border-bottom: 1px solid var(--border);">
-              <th style="padding: 10px 8px;">周次</th>
-              <th style="padding: 10px 8px;">日期范围</th>
-              <th style="padding: 10px 8px;">提交次数</th>
-              <th style="padding: 10px 8px;">映射成员</th>
-              <th style="padding: 10px 8px;">未映射作者</th>
-              <th style="padding: 10px 8px;">风险</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in weeklyStats" :key="item.week_label" style="border-bottom: 1px solid var(--border);">
-              <td style="padding: 10px 8px; font-weight: 700;">{{ item.week_label }}</td>
-              <td style="padding: 10px 8px;">{{ item.week_start }} ~ {{ item.week_end }}</td>
-              <td style="padding: 10px 8px;">{{ item.commit_count }}</td>
-              <td style="padding: 10px 8px;">{{ item.mapped_students.join(', ') || '-' }}</td>
-              <td style="padding: 10px 8px;">{{ item.unmapped_authors.join(', ') || '-' }}</td>
-              <td style="padding: 10px 8px;">{{ item.risk_flags.join(', ') || '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-else class="weekly-card-list">
+          <article v-for="item in weeklyStats" :key="item.week_label" class="weekly-card">
+            <div class="weekly-heading">
+              <div>
+                <strong>{{ item.week_label }}</strong>
+                <span class="panel-subtitle">{{ item.week_start }} ~ {{ item.week_end }}</span>
+              </div>
+              <span class="progress-badge" :data-status="item.progress_status">{{ progressLabel(item.progress_status) }}</span>
+            </div>
+            <p class="weekly-summary">{{ item.work_summary }}</p>
+            <div class="weekly-metrics">
+              <span>{{ item.commit_count }} commits</span>
+              <span>+{{ item.additions }} / -{{ item.deletions }}</span>
+              <span>{{ item.changed_files }} 个文件</span>
+            </div>
+            <div v-for="member in item.members" :key="`${item.week_label}-${member.student_name}`" class="member-progress-row">
+              <strong>{{ member.student_name }}</strong>
+              <span>{{ member.work_summary }}</span>
+              <small>{{ member.commit_count }} commits，+{{ member.additions }} / -{{ member.deletions }}</small>
+            </div>
+            <div v-if="item.unmapped_authors.length" class="panel-subtitle">未映射作者：{{ item.unmapped_authors.join(', ') }}</div>
+            <div v-if="item.risk_flags.length" class="panel-subtitle">风险：{{ item.risk_flags.join(', ') }}</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" style="display: grid; gap: 12px;">
+        <div style="display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <div>
+            <div style="font-weight: 700;">按成员查看提交记录</div>
+            <div class="panel-subtitle">查看每位成员的 commit、代码增删量和涉及文件数。</div>
+          </div>
+          <select v-model="selectedMemberKey" class="edueval-input" style="width: auto; min-width: 220px;">
+            <option value="all">全部成员</option>
+            <option v-for="member in memberCommitOverview.members" :key="member.member_id" :value="String(member.member_id)">
+              {{ member.student_name }}（{{ member.commit_count }}）
+            </option>
+            <option value="unmapped">未映射作者（{{ memberCommitOverview.unmapped_commits.length }}）</option>
+          </select>
+        </div>
+
+        <div v-if="selectedMemberHistory" class="member-total-grid">
+          <span>提交 <strong>{{ selectedMemberHistory.commit_count }}</strong></span>
+          <span>新增 <strong>+{{ selectedMemberHistory.additions }}</strong></span>
+          <span>删除 <strong>-{{ selectedMemberHistory.deletions }}</strong></span>
+          <span>文件 <strong>{{ selectedMemberHistory.changed_files }}</strong></span>
+        </div>
+        <div v-if="visibleMemberCommits.length === 0" class="panel-subtitle">当前筛选下没有提交。</div>
+        <div v-for="item in visibleMemberCommits" :key="`member-${item.id}`" class="commit-detail-card">
+          <div class="commit-detail-heading">
+            <strong>{{ item.author_name || 'Unknown' }}</strong>
+            <span>{{ formatDate(item.committed_at) }}</span>
+          </div>
+          <div>{{ item.message || '-' }}</div>
+          <div class="panel-subtitle">+{{ item.additions }} / -{{ item.deletions }}，{{ item.changed_files }} 个文件，{{ item.commit_hash.slice(0, 10) }}</div>
+          <a v-if="item.html_url" :href="item.html_url" target="_blank" rel="noopener noreferrer">在 Gitee 查看</a>
+        </div>
       </section>
 
       <section class="panel" style="display: grid; gap: 12px;">
@@ -164,11 +199,12 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import ChatHeader from '../components/ChatHeader.vue';
 import {
   fetchRepoCommits,
+  fetchRepoMemberCommits,
   fetchRepoSchedulerStatus,
   fetchRepoWeeklyStats,
   fetchSubmissionDetail,
@@ -192,6 +228,8 @@ const schedulerStatus = ref(null);
 const autoSyncEnabled = ref(true);
 const weeklyStats = ref([]);
 const commits = ref([]);
+const memberCommitOverview = ref({ members: [], unmapped_commits: [] });
+const selectedMemberKey = ref('all');
 const contributionSummary = ref(null);
 const memberMappings = ref([]);
 const repoUrl = ref('');
@@ -199,6 +237,17 @@ const defaultBranch = ref('');
 const loading = ref(false);
 const message = ref('');
 const errorMessage = ref('');
+
+const selectedMemberHistory = computed(() => {
+  if (selectedMemberKey.value === 'all' || selectedMemberKey.value === 'unmapped') return null;
+  return memberCommitOverview.value.members.find(item => String(item.member_id) === selectedMemberKey.value) || null;
+});
+
+const visibleMemberCommits = computed(() => {
+  if (selectedMemberKey.value === 'unmapped') return memberCommitOverview.value.unmapped_commits || [];
+  if (selectedMemberHistory.value) return selectedMemberHistory.value.commits || [];
+  return commits.value;
+});
 
 function formatDate(value) {
   if (!value) return '-';
@@ -210,6 +259,10 @@ function formatDate(value) {
 function weekdayLabel(value) {
   const labels = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '日' };
   return labels[Number(value)] || '?';
+}
+
+function progressLabel(value) {
+  return { active: '进展活跃', steady: '稳定推进', limited: '进展较少' }[value] || '待判断';
 }
 
 function goBack() {
@@ -231,6 +284,7 @@ function buildMemberMappingsFromSummary(summary, submissionDetail) {
       matched_commit_count: matched?.matched_commit_count || 0,
       matched_additions: matched?.matched_additions || 0,
       matched_deletions: matched?.matched_deletions || 0,
+      matched_changed_files: matched?.matched_changed_files || 0,
       matched_weeks: matched?.matched_weeks || [],
     };
   });
@@ -253,10 +307,12 @@ async function loadBindingAndStats() {
   if (!binding.value?.id) {
     weeklyStats.value = [];
     commits.value = [];
+    memberCommitOverview.value = { members: [], unmapped_commits: [] };
     return;
   }
   weeklyStats.value = await fetchRepoWeeklyStats(authStore.token, binding.value.id);
   commits.value = await fetchRepoCommits(authStore.token, binding.value.id);
+  memberCommitOverview.value = await fetchRepoMemberCommits(authStore.token, binding.value.id);
 }
 
 async function loadAll() {
@@ -381,9 +437,110 @@ onMounted(() => {
   gap: 10px;
 }
 
+.member-total-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.member-total-grid span,
+.commit-detail-card {
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+
+.commit-detail-card {
+  display: grid;
+  gap: 6px;
+}
+
+.commit-detail-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.weekly-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.weekly-card {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-soft);
+}
+
+.weekly-heading,
+.weekly-heading > div,
+.weekly-metrics {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.weekly-heading {
+  justify-content: space-between;
+}
+
+.progress-badge {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.progress-badge[data-status="active"] {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.progress-badge[data-status="steady"] {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.weekly-summary {
+  margin: 12px 0;
+  line-height: 1.65;
+}
+
+.weekly-metrics {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.member-progress-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.member-progress-row small {
+  color: var(--text-secondary);
+}
+
 @media (max-width: 960px) {
   .mapping-grid {
     grid-template-columns: 1fr;
+  }
+
+  .member-progress-row {
+    grid-template-columns: 1fr;
+  }
+
+  .member-total-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

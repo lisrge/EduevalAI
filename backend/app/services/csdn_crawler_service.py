@@ -146,7 +146,17 @@ class CsdnArticleDetail:
     capture_error: str
 
 
+CSDN_CATEGORY_RE = re.compile(r"/.*?/category_(\d+)(?:_(\d+))?\.html", re.I)
+
+
 def normalize_csdn_home_input(value: str) -> str:
+    """Normalize CSDN blog URL to either blog home or category page.
+
+    Blog home:     https://blog.csdn.net/{username}
+    Category page: https://blog.csdn.net/{username}/category_{id}.html
+    Article page:  https://blog.csdn.net/{username}/article/details/{id}
+    (article URLs are rejected — use the blog home or category instead)
+    """
     raw = (value or "").strip()
     if not raw:
         raise ValueError("empty csdn blog identifier")
@@ -154,30 +164,71 @@ def normalize_csdn_home_input(value: str) -> str:
         parsed = urlparse(raw)
         if not parsed.netloc.endswith("csdn.net"):
             raise ValueError("输入的 URL 不是有效的 CSDN 博客主页。")
-        parts = [part for part in parsed.path.split("/") if part]
+        path = parsed.path.rstrip("/")
+        # Reject individual article pages
+        if "/article/details/" in path:
+            raise ValueError("请输入博客主页或分类页面地址，不要直接贴文章链接。")
+        # Preserve category URLs
+        cat_match = CSDN_CATEGORY_RE.match(path)
+        if cat_match:
+            username = path.split("/")[1]
+            return f"https://blog.csdn.net/{username}/category_{cat_match.group(1)}.html"
+        parts = [part for part in path.split("/") if part]
         if not parts:
             raise ValueError("无法从 URL 中解析用户名。")
         return f"https://blog.csdn.net/{parts[0]}"
+    # Handle URLs without protocol prefix (e.g. "blog.csdn.net/yuceyu")
+    if "csdn.net" in raw or "/" in raw:
+        raw = ("https://" + raw) if not raw.startswith("http") else raw
+        parsed = urlparse(raw)
+        if not parsed.netloc.endswith("csdn.net"):
+            raise ValueError("输入的 URL 不是有效的 CSDN 博客主页。")
+        path = parsed.path.rstrip("/")
+        cat_match = CSDN_CATEGORY_RE.match(path)
+        if cat_match:
+            username_part = path.split("/")[1]
+            return f"https://blog.csdn.net/{username_part}/category_{cat_match.group(1)}.html"
+        parts = [part for part in path.split("/") if part]
+        return f"https://blog.csdn.net/{parts[0]}" if parts else f"https://blog.csdn.net/{raw}"
     username = raw.strip("/ ")
-    if not username or "/" in username or " " in username:
+    if not username or " " in username:
         raise ValueError("请输入有效的 CSDN 用户名或完整博客地址。")
     return f"https://blog.csdn.net/{username}"
 
 
 def extract_username(home_url: str) -> str:
-    parsed = urlparse(normalize_csdn_home_input(home_url))
+    parsed = urlparse(home_url)
     parts = [part for part in parsed.path.split("/") if part]
     if not parts:
         raise ValueError("无法从 URL 中解析用户名。")
     return parts[0]
 
 
+def is_category_url(url: str) -> bool:
+    return bool(CSDN_CATEGORY_RE.search(url))
+
+
+def get_category_id(url: str) -> str | None:
+    m = CSDN_CATEGORY_RE.search(url)
+    return m.group(1) if m else None
+
+
 def build_blog_home_url(home_url: str) -> str:
+    """Build the initial crawl URL. For category URLs, return as-is."""
+    if is_category_url(home_url):
+        return home_url
     username = extract_username(home_url)
     return f"https://blog.csdn.net/{username}?type=blog"
 
 
 def build_article_list_url(home_url: str, page_no: int) -> str:
+    """Build pagination URL. Category pages use /category_{id}_{page}.html format."""
+    if is_category_url(home_url):
+        cat_id = get_category_id(home_url)
+        username = extract_username(home_url)
+        if page_no <= 1:
+            return f"https://blog.csdn.net/{username}/category_{cat_id}.html"
+        return f"https://blog.csdn.net/{username}/category_{cat_id}_{page_no}.html"
     username = extract_username(home_url)
     return f"https://blog.csdn.net/{username}/article/list/{page_no}"
 
@@ -261,6 +312,7 @@ class CsdnCrawler:
         seen_urls: set[str] = set()
         collected: list[dict[str, str]] = []
         total_blog_count: int | None = None
+        _is_category = is_category_url(home_url)
 
         try:
             blog_home_url = build_blog_home_url(home_url)
@@ -272,7 +324,9 @@ class CsdnCrawler:
                         seen_urls.add(item["url"])
                         collected.append(item)
 
-            for page_no in range(1, self.settings.blog_max_pages + 1):
+            # For category URLs, start pagination from page 2 to avoid re-crawling page 1
+            start_page = 2 if _is_category else 1
+            for page_no in range(start_page, self.settings.blog_max_pages + 1):
                 list_url = build_article_list_url(home_url, page_no)
                 if not self._safe_goto(page, list_url):
                     break
@@ -314,8 +368,15 @@ class CsdnCrawler:
                         capture_timestamp=capture_timestamp,
                         index=index,
                     )
-                    self._prepare_page_for_capture(page)
-                    page.screenshot(path=str(screenshot_path), full_page=True)
+                    page.wait_for_timeout(2000)
+                    capture_status = "success"
+                    capture_error = ""
+                    try:
+                        page.screenshot(path=str(screenshot_path), full_page=False)
+                    except Exception as e:
+                        capture_status = "screenshot_failed"
+                        capture_error = str(e)[:500]
+                        # Still save HTML even if screenshot fails
                     html_path.write_text(raw_html, encoding="utf-8")
                     return CsdnArticleDetail(
                         title=title,
@@ -327,10 +388,10 @@ class CsdnCrawler:
                         tags=tags,
                         published_at=self._extract_publish_time(page),
                         capture_timestamp=capture_timestamp,
-                        screenshot_path=screenshot_path,
+                        screenshot_path=screenshot_path if capture_status == "success" else Path(""),
                         html_path=html_path,
-                        capture_status="success",
-                        capture_error="",
+                        capture_status=capture_status,
+                        capture_error=capture_error,
                     )
                 page.wait_for_timeout(1500 * (attempt + 1))
 
@@ -584,27 +645,128 @@ class CsdnCrawler:
         return re.sub(r"\s+", " ", value or "").strip()
 
 
+def _launch_stealth_browser(playwright: Playwright, settings: Settings):
+    """Launch headless Chromium that CAN be properly closed.
+
+    Uses launch() (not launch_persistent_context) so browser.close()
+    actually kills the process. Anti-detection via context init_script.
+    Returns (browser, context).
+    """
+    import random as _random
+
+    browser = playwright.chromium.launch(
+        headless=False,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-infobars",
+            "--disable-field-trial-config",
+            "--disable-background-networking",
+        ],
+    )
+    vp = _random.choice([(1440, 900), (1366, 768), (1536, 864)])
+    context = browser.new_context(
+        viewport={"width": vp[0], "height": vp[1]},
+        user_agent=_random.choice([
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        ]),
+        locale="zh-CN",
+        timezone_id="Asia/Shanghai",
+        bypass_csp=True,
+        ignore_https_errors=True,
+    )
+    # Hide automation traces
+    context.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+        Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
+        window.chrome = {runtime: {}};
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+            Promise.resolve({state: Notification.permission}) :
+            originalQuery(parameters)
+        );
+    """)
+    return browser, context
+
+
+def _create_stealth_context(browser):
+    """Create a browser context with randomized anti-fingerprinting."""
+    import random as _random
+
+    viewports = [(1440, 900), (1366, 768), (1536, 864), (1280, 720)]
+    ua_versions = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    ]
+    vp = _random.choice(viewports)
+    ua = _random.choice(ua_versions)
+
+    context = browser.new_context(
+        user_agent=ua,
+        viewport={"width": vp[0], "height": vp[1]},
+        locale="zh-CN",
+        timezone_id="Asia/Shanghai",
+        # Mask automation
+        bypass_csp=True,
+    )
+    # Remove webdriver flag
+    context.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+        Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
+        window.chrome = {runtime: {}};
+    """)
+    return context
+
+
 def crawl_csdn_blog(
     playwright: Playwright,
     settings: Settings,
     blog_home_url: str,
     user_storage_dir: Path,
+    skip_urls: set[str] | None = None,
 ) -> tuple[CsdnArticleListResult, list[CsdnArticleDetail], list[dict[str, str]]]:
     host, port = parse_cdp_port(settings.blog_cdp_url)
-    if not is_port_open(host, port):
-        if settings.blog_launch_chrome:
+    use_cdp = is_port_open(host, port)
+    if not use_cdp and settings.blog_launch_chrome:
+        try:
             start_chrome_if_needed(settings)
-        else:
-            raise RuntimeError("未检测到 Chrome/Edge 调试端口，请先启动已登录的浏览器或开启自动启动。")
-    browser = playwright.chromium.connect_over_cdp(settings.blog_cdp_url)
+            use_cdp = is_port_open(host, port)
+        except Exception:
+            use_cdp = False
+
+    import logging as _logging
+    _log = _logging.getLogger("blog_crawl")
+
+    if use_cdp:
+        _log.info("Using CDP mode (connected Chrome on port %d)", port)
+        browser = playwright.chromium.connect_over_cdp(settings.blog_cdp_url)
+        context = browser.contexts[0] if browser.contexts else browser.new_context(
+            viewport={"width": 1440, "height": 900},
+        )
+        owns_browser = False
+    else:
+        _log.info("Using headless mode (CDP port %d not available)", port)
+        browser, context = _launch_stealth_browser(playwright, settings)
+        owns_browser = True
+
     try:
-        context = browser.contexts[0] if browser.contexts else browser.new_context()
         crawler = CsdnCrawler(context=context, settings=settings)
         article_result = crawler.collect_articles(blog_home_url)
         details: list[CsdnArticleDetail] = []
         failures: list[dict[str, str]] = []
+        skipped = skip_urls or set()
         for index, article in enumerate(article_result.articles, start=1):
-            time.sleep(random.uniform(settings.blog_min_delay_seconds, settings.blog_max_delay_seconds))
+            if article["url"] in skipped:
+                continue
+            delay_min = max(0.0, float(settings.blog_min_delay_seconds or 0.0))
+            delay_max = max(delay_min, float(settings.blog_max_delay_seconds or delay_min))
+            time.sleep(random.uniform(delay_min, delay_max))
             detail = crawler.fetch_article_detail(
                 article_url=article["url"],
                 fallback_title=article["title"],
@@ -617,4 +779,9 @@ def crawl_csdn_blog(
             details.append(detail)
         return article_result, details, failures
     finally:
-        browser.close()
+        if owns_browser:
+            try:
+                context.close()
+                browser.close()
+            except Exception:
+                pass

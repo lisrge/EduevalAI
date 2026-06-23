@@ -36,6 +36,7 @@ def _load_submission(db: Session, submission_id: int) -> AssignmentSubmission:
         db.query(AssignmentSubmission)
         .options(
             selectinload(AssignmentSubmission.members),
+            selectinload(AssignmentSubmission.assets),
             selectinload(AssignmentSubmission.repo_binding).selectinload(RepoBinding.commits),
         )
         .filter(AssignmentSubmission.id == submission_id)
@@ -50,7 +51,9 @@ def _ensure_submission_access(user: User, submission: AssignmentSubmission) -> N
     if _is_admin(user):
         return
     if submission.submitter_user_id != user.id:
-        raise HTTPException(status_code=403, detail="forbidden")
+        member_ids = {str(member.student_id or "").strip() for member in submission.members}
+        if str(user.student_id or "").strip() not in member_ids:
+            raise HTTPException(status_code=403, detail="forbidden")
 
 
 @router.get("/submissions/{submission_id}/workload", response_model=SubmissionWorkloadSummary)

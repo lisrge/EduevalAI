@@ -42,6 +42,25 @@
       <section class="panel">
         <div class="panel-header">
           <div>
+            <h3 style="margin: 0;">用户博客总结</h3>
+            <p class="panel-subtitle">汇总该用户已保留博客的摘要、工作项和风险提示。</p>
+          </div>
+        </div>
+        <div class="edueval-panel-body">
+          <div v-if="blogSummary.summary_text" class="blog-user-summary">{{ blogSummary.summary_text }}</div>
+          <div v-else class="empty-state" style="padding: 0;">暂无用户级博客总结。</div>
+          <div v-if="blogSummary.work_items?.length" class="blog-tag-row" style="margin-top: 12px;">
+            <span v-for="item in blogSummary.work_items" :key="item" class="badge neutral">{{ item }}</span>
+          </div>
+          <div v-if="blogSummary.risk_flags?.length" class="blog-tag-row" style="margin-top: 12px;">
+            <span v-for="flag in blogSummary.risk_flags" :key="flag" class="badge warn">{{ flag }}</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
             <h3 style="margin: 0;">博客配置与抓取</h3>
             <p class="panel-subtitle">支持填写 CSDN 用户名或完整主页地址，后端会自动规范化。</p>
           </div>
@@ -113,6 +132,30 @@
         </div>
       </section>
 
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h3 style="margin: 0;">文章审计记录</h3>
+            <p class="panel-subtitle">保存所有扫描文章的标题、发表时间和分类；无关文章不保留截图。</p>
+          </div>
+        </div>
+        <div class="edueval-panel-body table-wrap">
+          <div v-if="auditItems.length === 0" class="empty-state">暂无审计记录。</div>
+          <table v-else class="admin-table">
+            <thead><tr><th>标题</th><th>发表时间</th><th>分类</th><th>实际工作</th><th>原文</th></tr></thead>
+            <tbody>
+              <tr v-for="item in auditItems" :key="item.id">
+                <td>{{ item.title }}</td>
+                <td>{{ formatTime(item.published_at) }}</td>
+                <td>{{ auditClassLabel(item.classification) }}</td>
+                <td>{{ item.has_actual_work ? '有' : '无/未识别' }}</td>
+                <td><a :href="item.url" target="_blank" rel="noopener noreferrer">打开</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <div class="content-grid">
         <section class="panel list-panel">
           <div class="panel-header">
@@ -133,6 +176,7 @@
                 :class="{ active: selectedBlogId === blog.id }"
               >
                 <div class="blog-item-title">{{ blog.title }}</div>
+                <div v-if="blog.summary" class="blog-item-summary">{{ blog.summary }}</div>
                 <div class="muted-line">
                   发布时间 {{ formatTime(blog.published_at) }} · 抓取 {{ blog.capture_status }}
                 </div>
@@ -141,6 +185,13 @@
                   <button class="ghost-button compact-button" type="button" :disabled="!blog.has_html" @click="openArchiveModal(blog)">归档地址</button>
                   <button class="ghost-button compact-button" type="button" :disabled="!blog.has_screenshot" @click="openScreenshot(blog)">截图</button>
                   <a :href="blog.url" target="_blank" rel="noopener noreferrer" class="ghost-button compact-button origin-link">原文</a>
+                  <select @change="e => toggleCategory(blog, e.target.value)" :value="blog.category || 'project_update'" class="compact-select" style="margin-left: 6px;">
+                    <option value="project_update">项目博客</option>
+                    <option value="project_code_dump">项目+纯代码</option>
+                    <option value="code_dump">纯代码</option>
+                    <option value="popular_science">科普</option>
+                    <option value="unrelated">不相关</option>
+                  </select>
                 </div>
                 <div class="inline-stack" style="margin-top: 10px;">
                   <span :style="{ color: reviewColor(blog.review_status), fontWeight: 800 }">{{ reviewLabel(blog.review_status) }}</span>
@@ -280,13 +331,16 @@ import ChatHeader from '../components/ChatHeader.vue';
 import { getServerBase } from '../services/eduevalApi';
 import {
   adminFetchUserBlogDetail,
+  adminFetchUserBlogSummary,
   adminFetchUserBlogScreenshot,
   adminGetUserBlogProfile,
   adminListUserBlogCrawlRuns,
   adminListUserBlogs,
   adminReviewUserBlog,
   adminTriggerUserBlogCrawl,
+  adminUpdateBlogCategory,
   adminUpdateUserBlogProfile,
+  fetchUserBlogAuditItems,
 } from '../services/eduevalApi';
 import { useAuthStore } from '../stores/authStore';
 
@@ -298,6 +352,12 @@ const userId = computed(() => String(route.params.userId || ''));
 
 const items = ref([]);
 const runItems = ref([]);
+const auditItems = ref([]);
+const blogSummary = ref({
+  summary_text: '',
+  work_items: [],
+  risk_flags: [],
+});
 const blogProfile = ref({
   blog_home_url: '',
   blog_enabled: true,
@@ -397,6 +457,16 @@ function formatTime(value) {
   return dt.toLocaleString();
 }
 
+function auditClassLabel(value) {
+  return {
+    project_update: '项目工作博客',
+    project_code_dump: '项目纯代码倾向',
+    popular_science: '空泛/科普博客',
+    code_dump: '纯代码博客',
+    unrelated: '非项目博客',
+  }[value] || value;
+}
+
 function crawlStatusLabel(status) {
   const v = String(status || '').toLowerCase();
   if (v === 'running') return '抓取中';
@@ -445,18 +515,24 @@ async function loadAll() {
   localError.value = '';
   loading.value = true;
   try {
-    const [profile, list, runs] = await Promise.all([
+    const [profile, list, runs, audits, summary] = await Promise.all([
       adminGetUserBlogProfile(authStore.token, userId.value),
       adminListUserBlogs(authStore.token, userId.value),
       adminListUserBlogCrawlRuns(authStore.token, userId.value),
+      fetchUserBlogAuditItems(authStore.token, userId.value),
+      adminFetchUserBlogSummary(authStore.token, userId.value),
     ]);
     blogProfile.value = profile || blogProfile.value;
     items.value = Array.isArray(list) ? list : [];
     runItems.value = Array.isArray(runs) ? runs : [];
+    auditItems.value = Array.isArray(audits) ? audits : [];
+    blogSummary.value = summary || blogSummary.value;
   } catch (e) {
     localError.value = e?.message || '加载失败';
     items.value = [];
     runItems.value = [];
+      auditItems.value = [];
+      blogSummary.value = { summary_text: '', work_items: [], risk_flags: [] };
   } finally {
     loading.value = false;
   }
@@ -512,6 +588,15 @@ function clearPreview() {
   previewDetail.value = null;
   previewError.value = '';
   previewLoading.value = false;
+}
+
+async function toggleCategory(blog, newCategory) {
+  try {
+    await adminUpdateBlogCategory(authStore.token, userId.value, blog.id, newCategory);
+    blog.category = newCategory;
+  } catch (e) {
+    alert('分类更新失败: ' + (e?.message || ''));
+  }
 }
 
 async function previewBlog(blog) {
@@ -694,6 +779,15 @@ onMounted(() => {
   word-break: break-word;
 }
 
+.blog-user-summary {
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
 .blog-toolbar {
   display: flex;
   gap: 10px;
@@ -760,6 +854,17 @@ onMounted(() => {
   font-size: 16px;
   font-weight: 800;
   line-height: 1.5;
+}
+
+.blog-item-summary {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .muted-line {

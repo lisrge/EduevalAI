@@ -17,5 +17,7 @@ class UserGroup(Base):
     code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     leader_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    repo_url: Mapped[str | None] = mapped_column(String(800))
+    import_key: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

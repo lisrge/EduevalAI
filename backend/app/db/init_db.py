@@ -2,10 +2,11 @@ from sqlalchemy import inspect, text
 
 from app.db.base import Base, SessionLocal, engine
 from app.models.application import ApplicationRecord, ScoreResult
-from app.models.blog import BlogCrawlRun, BlogPost, BlogSource
+from app.models.blog import BlogAuditItem, BlogCrawlRun, BlogPost, BlogSource
 from app.models.code_analysis import SubmissionCodeAnalysis
 from app.models.course import Assignment, Course
 from app.models.document_draft import ApplicationDraft, TaskDraft
+from app.models.document_import import DocumentImportBatch, DocumentImportFile
 from app.models.group import UserGroup
 from app.models.request import UserChangeRequest
 from app.models.repository import RepoBinding, RepoCommitSnapshot
@@ -43,6 +44,14 @@ def init_db() -> None:
             conn.exec_driver_sql("ALTER TABLE user_groups ADD COLUMN leader_user_id INTEGER NULL")
             try:
                 conn.exec_driver_sql("CREATE INDEX ix_user_groups_leader_user_id ON user_groups(leader_user_id)")
+            except Exception:
+                pass
+        if group_cols and "repo_url" not in group_cols:
+            conn.exec_driver_sql("ALTER TABLE user_groups ADD COLUMN repo_url VARCHAR(800) NULL")
+        if group_cols and "import_key" not in group_cols:
+            conn.exec_driver_sql("ALTER TABLE user_groups ADD COLUMN import_key VARCHAR(128) NULL")
+            try:
+                conn.exec_driver_sql("CREATE UNIQUE INDEX ux_user_groups_import_key ON user_groups(import_key)")
             except Exception:
                 pass
         if group_cols:
@@ -277,6 +286,26 @@ def init_db() -> None:
         if "ux_blog_posts_user_url" not in existing_indexes:
             try:
                 conn.exec_driver_sql("CREATE UNIQUE INDEX ux_blog_posts_user_url ON blog_posts(user_id, url)")
+            except Exception:
+                pass
+
+        # Existing MySQL installations may have created these as TEXT. Chinese
+        # content reaches the 64 KiB byte limit long before a long article ends.
+        if engine.dialect.name == "mysql" and blog_cols:
+            for column_name in ("content_md", "content_text"):
+                if column_name in blog_cols:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE blog_posts MODIFY COLUMN {column_name} LONGTEXT NOT NULL"
+                    )
+
+        try:
+            import_file_cols = {c["name"] for c in inspector.get_columns("document_import_files")}
+        except Exception:
+            import_file_cols = set()
+        if import_file_cols and "group_id" not in import_file_cols:
+            conn.exec_driver_sql("ALTER TABLE document_import_files ADD COLUMN group_id INTEGER NULL")
+            try:
+                conn.exec_driver_sql("CREATE INDEX ix_document_import_files_group_id ON document_import_files(group_id)")
             except Exception:
                 pass
 

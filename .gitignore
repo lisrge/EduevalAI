@@ -1,0 +1,43 @@
+# IDE
+.idea/
+
+# Claude Code
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+
+# Node
+node_modules/
+dist/
+
+# Environment
+.env
+
+# Database
+*.sqlite3
+*.sql
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Storage / runtime data
+storage/
+
+# Temporary files
+tmp_*
+
+# Archive artifacts
+*.zip

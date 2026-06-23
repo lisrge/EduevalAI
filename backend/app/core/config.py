@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     blog_chrome_exe: str | None = None
     blog_profile_dir: str = "./storage/browser_profile"
     blog_max_pages: int = 100
+    blog_max_posts_per_source: int = 500
     blog_min_delay_seconds: float = 2.0
     blog_max_delay_seconds: float = 5.0
     blog_navigation_timeout_ms: int = 45000

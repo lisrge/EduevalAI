@@ -1,32 +1,28 @@
 # EduEvalAI
 
-EduEvalAI 是一个教学项目材料管理与评审系统，当前包含：
+教学项目材料管理与评审系统——学生提交作业 → 教师评分 → 管理员总览 + 博客抓取分析。
 
-- 学生侧：申请书/草稿管理、作业提交（上传任意材料并提交）
-- 教师侧：移动端样式的评分端（只打分，不看后台/不交作业）
-- 管理员侧：后台管理、作业总览、分配老师、导出成绩、博客总览与抓取（可选）
+## 快速启动
 
-## 快速开始（本地开发）
+### 环境要求
 
-默认端口约定：
+- Python 3.12+ / MySQL 5.7+
+- Node.js 18+ / npm 9+
+- Chrome 浏览器（用于 CSDN 博客抓取，可选）
 
-- 后端：`http://127.0.0.1:8001`（API 前缀 `/api`）
-- Vue 前端：`http://localhost:8080`
-
-### 1) 后端启动
+### 1) 后端
 
 ```bash
 cd backend
-pip install -r requirements.txt
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt   # Windows
+cp .env.example .env   # 编辑 .env 填写 MySQL 连接信息
+.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-说明：
+启动后访问 `http://127.0.0.1:8001/api`，看到 `{"status":"running"}` 即成功。
 
-- 数据库连接优先使用 `DATABASE_URL`；如果连接失败会自动回退到本地 SQLite（`./edueval_ai.sqlite3`），方便开发阶段无服务器运行。
-- 首次启动会自动建表并执行初始化脚本（包含默认管理员、默认作业等）。
-
-### 2) Vue 前端启动
+### 2) 前端
 
 ```bash
 cd fronted
@@ -34,135 +30,109 @@ npm install
 npm run serve -- --port 8080
 ```
 
-### 3) Flutter Web（可选，教师独立端）
-教师评分仅保留 Vue 前端内置页面（`/teacher/reviews`），不再维护 Flutter 端。
+访问 `http://localhost:8080`
 
-## 目录结构
+### 3) 博客抓取（可选，需要 Chrome）
 
-```text
-EduevalAI/
-├─ backend/
-│  ├─ .env
-│  ├─ .env.example
-│  ├─ requirements.txt
-│  └─ app/
-├─ fronted/
-│  ├─ package.json
-│  └─ src/
-└─ README.md
+```bash
+# 安装 Playwright 浏览器
+python -m playwright install chromium
+
+# 启动带调试端口的 Chrome（CDP 模式）
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=backend\storage\browser_profile
+
+# 在 Chrome 中登录 CSDN，然后在 .env 中启用
+BLOG_CRAWLER_ENABLED=true
 ```
 
-## 角色与权限（必读）
+## 角色与权限
 
-系统只有三种角色：
+| 角色 | 权限 |
+|------|------|
+| admin | 全部：用户/分组管理、作业看板、评分分配、博客抓取审查、CSV 导出 |
+| teacher | 仅评分（`/teacher/reviews`） |
+| user | 仅交作业/上传材料（`/homework`） |
 
-- **admin（管理员）**：拥有所有权限（后台、看全局、分配老师、导出、也可打分）
-- **teacher（老师）**：只能打分（不能交作业、不能看后台）
-- **user（学生）**：只能交作业/上传材料（不能打分、不能看后台）
+第一个注册的账号自动成为 root admin，不可降级。
 
-规则：
+## 主要页面
 
-- 第一个注册成功的账号会自动成为 **初始管理员**（`is_root_admin=true`）。
-- 初始管理员不能被降级。
+| 页面 | 说明 |
+|------|------|
+| `/admin/users` | 用户管理（角色、分组、博客配置、Gitee 仓库链接） |
+| `/admin/groups` | 分组管理 |
+| `/admin/blog-overview` | 博客总览（抓取状态、分类统计、搜索、CSV 导出） |
+| `/admin/users/:id/blogs` | 用户博客详情（正文预览、分类切换） |
+| `/admin/submissions` | 作业看板 |
+| `/admin/document-import` | 文档批量导入（PDF 任务书/申请书解析） |
+| `/teacher/reviews` | 教师评分 |
+| `/homework` | 学生作业提交 |
 
 ## 配置（backend/.env）
 
-项目提供示例配置：
-
-```text
-backend/.env.example
-```
-
-复制为：
-
-```text
-backend/.env
-```
-
-开发期最小配置示例：
-
 ```env
+# 数据库（必填）
 DATABASE_URL=mysql+pymysql://root:123456@127.0.0.1:3306/edueval_ai?charset=utf8mb4
-CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
+CORS_ORIGINS=http://localhost:8080
+
+# AI 模型（DeepSeek，用于博客分类和文档解析）
+MODEL_BASE_URL=https://api.deepseek.com/v1
+MODEL_API_KEY=sk-xxx
+MODEL_NAME=deepseek-chat
+
+# 博客抓取
+BLOG_CRAWLER_ENABLED=false   # 启用设为 true
 BLOG_CDP_URL=http://127.0.0.1:9222
-BLOG_LAUNCH_CHROME=false
+BLOG_LAUNCH_CHROME=false     # CDP 模式关闭自动启动
 ```
 
-说明：
+## 博客系统架构
 
-- 不配置 MySQL 也能跑：当 MySQL 不可用时后端自动回退到 SQLite。
-- `BLOG_*` 仅在你需要管理员抓取/预览博客时才需要配置。
+### 分类体系
 
-## 作业提交（学生）
+| 分类 | 含义 |
+|------|------|
+| `project_update` | 项目实训工作记录（有描述和总结） |
+| `project_code_dump` | 项目相关但几乎全是代码 |
+| `project_science` | 项目相关但写成通用教程 |
+| `unrelated` | 与项目实训完全无关 |
 
-入口：
+### 抓取流程
 
-- Vue 前端右上角菜单：`交作业`
-- 直接访问：`/homework`
+```
+用户提供 CSDN 博客 URL → 管理员触发抓取 → Worker 队列
+  → CDP Chrome 访问博客 → 逐篇提取内容 + 截图
+  → DeepSeek 分析（项目/纯代码/科普/不相关）
+  → 逐篇写入数据库
+```
 
-标准流程：
+### DeepSeek 判断标准
 
-1. 选择作业
-2. 填写小组信息 / 项目名 / 成员个人陈述
-3. 选择文件上传（支持多次上传形成版本）
-4. 点击“提交作业”（finalize）
+- 有工作描述/总结/解释 → project_update
+- 几乎全是代码无说明 → project_code_dump
+- 通用教程风格无项目语境 → project_science
+- 完全无关 → unrelated
 
-当前内置了一个作业（启动时自动创建）：
+## 数据库初始化
 
-- **2026项目实训末期检查**：允许上传任意类型文件（你可自定义“材料类型”，例如 `attachment`、`report`、`code_archive`）
+首次启动自动建表（`init_db.py`），并创建默认课程和作业。无需手动执行 SQL。
 
-## 教师评分（老师）
+## 文件存储
 
-入口：
-
-- Vue 前端：`/teacher/reviews`（移动端样式，顶部支持退出登录）
-
-评分流程：
-
-1. 查看待评队列
-2. 进入某个提交详情
-3. 填写评分项与评语并提交
-
-## 后台查看（管理员）
-
-主要入口：
-
-- 用户与权限管理：`/admin/users`
-- 作业统一看板（查看所有提交 / 导出 / 跳转仓库与工作量）：`/admin/submissions`
-- 分配老师：从看板进入 `teacher-assignments`
-
-## 文件存储与备份（无服务器场景）
-
-开发阶段默认采用“本地磁盘落盘 + 数据库记录元数据”的方式：
-
-- 上传文件落在：`backend/storage/submissions/`
-- 路径结构：
-  - `storage/submissions/{submission_id}/{asset_type}/v{version}_{uuid}{suffix}`
-
-建议备份两样即可完成整站迁移/恢复：
-
-1. `backend/storage/`（全部文件）
-2. 数据库文件：
-   - MySQL：备份数据库
-   - SQLite：备份 `backend/edueval_ai.sqlite3`
+```
+backend/storage/
+├── submissions/{id}/{type}/   # 作业附件
+├── applications/              # 申请书
+├── signatures/                # 签名
+├── blogs/screenshots/         # 博客截图
+├── blogs/html/                # 博客 HTML 存档
+├── browser_profile/           # Chrome 用户数据
+└── exports/                   # 导出文件
+```
 
 ## 常见问题
 
-### 1) 老师登录后提示 `staff required`
-
-含义：当前账号不是 `teacher/admin`。
-
-处理：
-
-- 管理员到 `/admin/users` 把该账号角色改为 `teacher`（初始管理员不可降级）
-
-### 2) 博客抓取提示缺少 playwright
-
-如果你需要启用博客抓取：
-
-```bash
-pip install -r requirements.txt
-python -m playwright install chromium
-```
-- 给博客取证页增加失败原因展开和异常页自动告警。
-- 如果后续规模继续扩大，再把博客抓取升级为异步任务队列。
+- **博客抓取失败**：检查 CDP Chrome 是否在 9222 端口运行且已登录 CSDN
+- **老师登录提示 staff required**：管理员在 `/admin/users` 改为 teacher 角色
+- **前端目录名**：`fronted/` 是历史命名，非 `frontend/`
+- **数据库回退**：不再支持 SQLite 回退，必须使用 MySQL

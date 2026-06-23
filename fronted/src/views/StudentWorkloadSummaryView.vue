@@ -16,6 +16,21 @@
       <div class="summary-block">
         <div class="block-title">工作摘要</div>
         <p>{{ member?.summary_text || '暂无摘要' }}</p>
+        <div class="confidence">分析依据：{{ confidenceLabel(member?.analysis_confidence) }}</div>
+      </div>
+
+      <div class="summary-block" v-if="member?.work_items?.length">
+        <div class="block-title">个人工作项</div>
+        <ul class="work-item-list">
+          <li v-for="item in member.work_items" :key="item">{{ item }}</li>
+        </ul>
+      </div>
+
+      <div class="summary-block" v-if="member?.material_evidence?.length">
+        <div class="block-title">作业材料依据</div>
+        <ul class="material-list">
+          <li v-for="item in member.material_evidence" :key="item">{{ item }}</li>
+        </ul>
       </div>
 
       <div class="summary-block">
@@ -69,6 +84,10 @@ const route = useRoute();
 
 const member = ref(null);
 const errorMessage = ref('');
+
+function confidenceLabel(value) {
+  return { high: '材料交叉验证（高）', medium: '材料交叉验证（中）', low: '材料交叉验证（低）', statement_based: '个人陈述与统计', rule_based: '统计规则' }[value] || '统计规则';
+}
 
 async function loadAll() {
   errorMessage.value = '';
@@ -160,6 +179,25 @@ h1 {
   margin: 0;
   color: #0f172a;
   line-height: 1.6;
+}
+
+.confidence {
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.work-item-list,
+.material-list {
+  margin: 0;
+  padding-left: 20px;
+  color: #0f172a;
+  line-height: 1.7;
+}
+
+.material-list {
+  font-size: 13px;
+  color: #475569;
 }
 
 .evidence-list {

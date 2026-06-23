@@ -13,7 +13,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    student_id: Mapped[str] = mapped_column(String(12), unique=True, index=True, nullable=False)
+    student_id: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     real_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
     password_salt: Mapped[str] = mapped_column(String(64), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(128), nullable=False)

@@ -57,6 +57,8 @@ class BlogCrawlResponse(BaseModel):
     crawled_count: int = 0
     created_count: int = 0
     updated_count: int = 0
+    filtered_count: int = 0
+    screenshot_failed_count: int = 0
 
 
 class BlogOverviewItem(BaseModel):
@@ -71,6 +73,16 @@ class BlogOverviewItem(BaseModel):
     popular_science_count: int = 0
     work_item_count: int = 0
     latest_published_at: datetime | None = None
+    earliest_published_at: datetime | None = None
+    recent_eight_span_days: int | None = None
+    scanned_blog_count: int = 0
+    published_time_count: int = 0
+    low_quality_count: int = 0
+    filtered_popular_science_count: int = 0
+    crawl_status: str = "idle"
+    crawl_error: str | None = None
+    risk_flags: list[str] = Field(default_factory=list)
+    gitee_url: str = ""
 
 
 class BlogOverviewSummary(BaseModel):
@@ -79,4 +91,21 @@ class BlogOverviewSummary(BaseModel):
     total_code_dump_posts: int = 0
     total_popular_science_posts: int = 0
     total_project_blog_posts: int = 0
+    incomplete_user_count: int = 0
+    failed_user_count: int = 0
+    burst_posting_user_count: int = 0
     users: list[BlogOverviewItem] = Field(default_factory=list)
+
+
+class BlogAuditInfo(BaseModel):
+    id: int
+    user_id: int
+    url: str
+    title: str
+    published_at: datetime | None = None
+    classification: str
+    is_project_training: bool = False
+    is_mostly_code: bool = False
+    is_popular_science: bool = False
+    has_actual_work: bool = False
+    last_seen_at: datetime

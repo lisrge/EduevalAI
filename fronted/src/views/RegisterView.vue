@@ -12,7 +12,7 @@
 
         <div class="edueval-panel-body" style="overflow: visible;">
           <div class="field" style="margin-bottom: 12px;">
-            <span>学号（12 位数字）</span>
+            <span>账号</span>
             <input v-model="studentId" type="text" inputmode="numeric" autocomplete="username" />
           </div>
           <div class="field" style="margin-bottom: 12px;">
@@ -73,7 +73,8 @@ function onFileChange(event) {
 
 function validate() {
   const sid = String(studentId.value || '').trim();
-  if (!/^\d{12}$/.test(sid)) return '学号必须为 12 位纯数字';
+  if (!sid) return '请输入账号';
+  if (sid.length > 50) return '账号不能超过50位';
   if (!String(realName.value || '').trim()) return '请输入姓名';
   if (!signatureFile.value) return '请上传电子签名图片';
   if (!String(signatureFile.value.type || '').startsWith('image/')) return '电子签名必须为图片格式';

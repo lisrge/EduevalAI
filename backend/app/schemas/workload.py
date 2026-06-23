@@ -22,6 +22,9 @@ class WorkloadMemberSummary(BaseModel):
     blog_popular_science_count: int = 0
     blog_work_item_count: int = 0
     summary_text: str
+    work_items: list[str] = Field(default_factory=list)
+    material_evidence: list[str] = Field(default_factory=list)
+    analysis_confidence: str = "rule_based"
     evidence: list[WorkloadEvidenceItem] = Field(default_factory=list)
 
 

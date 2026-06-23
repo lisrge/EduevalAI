@@ -523,6 +523,13 @@ export async function adminFetchUserBlogDetail(token, userId, blogId) {
   return parseResponse(response);
 }
 
+export async function adminFetchUserBlogSummary(token, userId) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/blogs/summary`, {
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
 export async function adminFetchUserBlogMarkdown(token, userId, blogId) {
   const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${userId}/blogs/${blogId}/md`, {
     headers: withAuthHeader(token),
@@ -787,8 +794,48 @@ export async function runRepoSchedulerNow(token) {
   return parseResponse(response);
 }
 
+export async function runAllRepoBindings(token) {
+  const response = await fetchWithFallback(`${getApiBase()}/repo-sync/run-all-bindings`, {
+    method: 'POST',
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function runSelectedRepoBindings(token, { submissionIds = [], groupIds = [] } = {}) {
+  const response = await fetchWithFallback(`${getApiBase()}/repo-sync/run-selected-bindings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...withAuthHeader(token),
+    },
+    body: JSON.stringify({
+      submission_ids: Array.isArray(submissionIds) ? submissionIds : [],
+      group_ids: Array.isArray(groupIds) ? groupIds : [],
+    }),
+  });
+  return parseResponse(response);
+}
+
+export async function fetchRepoMemberProgress(token, { assignmentId = null, submissionId = null } = {}) {
+  const qs = new URLSearchParams();
+  if (assignmentId) qs.set('assignment_id', String(assignmentId));
+  if (submissionId) qs.set('submission_id', String(submissionId));
+  const response = await fetchWithFallback(`${getApiBase()}/repo-sync/member-progress${qs.toString() ? `?${qs.toString()}` : ''}`, {
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
 export async function fetchRepoCommits(token, bindingId) {
   const response = await fetchWithFallback(`${getApiBase()}/repo-bindings/${encodeURIComponent(String(bindingId))}/commits`, {
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function fetchRepoMemberCommits(token, bindingId) {
+  const response = await fetchWithFallback(`${getApiBase()}/repo-bindings/${encodeURIComponent(String(bindingId))}/member-commits`, {
     headers: withAuthHeader(token),
   });
   return parseResponse(response);
@@ -902,6 +949,61 @@ export async function crawlAllBlogSources(token) {
   const response = await fetchWithFallback(`${getApiBase()}/blogs/admin/crawl-all`, {
     method: 'POST',
     headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function crawlFailedOrNewUsers(token) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/blogs/crawl-failed-or-new`, {
+    method: 'POST',
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function adminUpdateBlogCategory(token, userId, blogId, category) {
+  const response = await fetchWithFallback(`${getApiBase()}/users/admin/users/${encodeURIComponent(userId)}/blogs/${encodeURIComponent(blogId)}/category`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...withAuthHeader(token),
+    },
+    body: JSON.stringify({ category }),
+  });
+  return parseResponse(response);
+}
+
+export async function retryIncompleteBlogUsers(token) {
+  const response = await fetchWithFallback(`${getApiBase()}/blogs/admin/retry-incomplete`, {
+    method: 'POST',
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function fetchUserBlogAuditItems(token, userId) {
+  const response = await fetchWithFallback(`${getApiBase()}/blogs/admin/users/${encodeURIComponent(String(userId))}/audit-items`, {
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function previewDocumentImport(token, files = []) {
+  const formData = new FormData();
+  for (const file of files) formData.append('files', file);
+  const response = await fetchWithFallback(`${getApiBase()}/document-imports/admin/preview`, {
+    method: 'POST',
+    headers: withAuthHeader(token),
+    body: formData,
+  });
+  return parseResponse(response);
+}
+
+export async function commitDocumentImport(token, batchId, groups = []) {
+  const response = await fetchWithFallback(`${getApiBase()}/document-imports/admin/${encodeURIComponent(String(batchId))}/commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...withAuthHeader(token) },
+    body: JSON.stringify({ groups }),
   });
   return parseResponse(response);
 }

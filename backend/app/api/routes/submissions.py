@@ -12,6 +12,7 @@ from app.db.base import get_db
 from app.models.blog import BlogPost
 from app.models.code_analysis import SubmissionCodeAnalysis
 from app.models.course import Assignment
+from app.models.group import UserGroup
 from app.models.repository import RepoBinding
 from app.models.submission import AssignmentSubmission, SubmissionAsset, SubmissionMember
 from app.models.user import User
@@ -31,7 +32,7 @@ from app.schemas.assignment_submission import (
 from app.services.auth_service import get_user_by_token
 from app.services.code_analysis_service import analyze_code_archive, dumps_summary, loads_summary
 from app.services.file_service import remove_stored_file, save_submission_asset
-from app.services.repository_service import build_member_contribution_summary
+from app.services.repository_service import build_member_contribution_summary, upsert_repo_binding
 from app.services.teacher_score_service import build_teacher_score_aggregate
 from app.services.workload_service import build_submission_workload_summary
 
@@ -500,6 +501,10 @@ def create_or_update_assignment_submission(
 
     _sync_members(submission, payload.members)
     db.flush()
+    if not submission.repo_binding and user.group_id:
+        group = db.query(UserGroup).filter(UserGroup.id == user.group_id).first()
+        if group and group.repo_url:
+            upsert_repo_binding(db, submission.id, group.repo_url)
     db.refresh(submission)
     submission.assignment = assignment
     _refresh_completeness(submission)

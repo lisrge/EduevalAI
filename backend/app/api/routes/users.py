@@ -7,7 +7,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from pydantic import BaseModel
+from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,9 @@ from app.schemas.user_profile import (
     BlogCrawlRunItem,
     BlogDetail,
     BlogItem,
+    BlogUserSummaryResponse,
+    BlogReevaluatePayload,
+    BlogReevaluateResponse,
     BlogReviewPayload,
     BlogReviewResponse,
     ChangePasswordPayload,
@@ -50,7 +54,13 @@ from app.schemas.user_profile import (
     TeacherStudentListItem,
 )
 from app.services.auth_service import change_password, get_user_by_token
-from app.services.blog_crawler_service import run_user_blog_crawl
+from app.services.blog_crawl_job_service import queue_user_blog_crawls
+from app.services.blog_crawler_service import (
+    build_blog_user_risk,
+    loads_work_items,
+    re_evaluate_blog_posts,
+    resolve_blog_crawl_status,
+)
 from app.services.csdn_crawler_service import cleanup_csdn_extracted_text, normalize_csdn_home_input
 from app.services.document_draft_service import (
     loads_content,
@@ -92,13 +102,13 @@ def _require_staff(user: User) -> None:
         raise HTTPException(status_code=403, detail="admin required")
 
 
-def _build_blog_profile_response(user: User) -> UserBlogProfileResponse:
+def _build_blog_profile_response(user: User, saved_post_count: int = 0) -> UserBlogProfileResponse:
     return UserBlogProfileResponse(
         id=user.id,
         student_id=user.student_id,
         blog_home_url=user.blog_home_url or "",
         blog_enabled=bool(user.blog_enabled),
-        blog_crawl_status=user.blog_crawl_status or "idle",
+        blog_crawl_status=resolve_blog_crawl_status(user.blog_crawl_status or "idle", saved_post_count),
         blog_last_crawled_at=user.blog_last_crawled_at,
     )
 
@@ -202,6 +212,7 @@ def _build_group_item(
         leader_project_title=leader_project_title,
         member_count=member_count,
         description=row.description or "",
+        repo_url=row.repo_url or "",
     )
 
 
@@ -214,18 +225,31 @@ def _extract_blog_preview_html(row: BlogPost) -> str:
     except Exception:
         return ""
 
-    patterns = [
-        r'<div[^>]+id="content_views"[^>]*>(?P<body>[\s\S]*?)</div>\s*</div>',
-        r'<div[^>]+class="markdown_views[^"]*"[^>]*>(?P<body>[\s\S]*?)</div>\s*</div>',
-        r'<div[^>]+class="htmledit_views[^"]*"[^>]*>(?P<body>[\s\S]*?)</div>\s*</div>',
-    ]
-    fragment = ""
-    for pattern in patterns:
-        match = re.search(pattern, raw_html, flags=re.IGNORECASE)
-        if match:
-            fragment = match.group("body")
+    # Find article body by locating the content div and counting nested divs
+    for marker in (r'id="content_views"', r'class="markdown_views"', r'class="htmledit_views"'):
+        m = re.search(rf'<div[^>]*{marker}[^>]*>', raw_html, re.I)
+        if not m:
+            continue
+        start = m.end()
+        depth = 1
+        pos = start
+        while depth > 0 and pos < len(raw_html):
+            next_open = raw_html.find("<div", pos)
+            next_close = raw_html.find("</div>", pos)
+            if next_close == -1:
+                break
+            if next_open != -1 and next_open < next_close:
+                depth += 1
+                pos = next_open + 4
+            else:
+                depth -= 1
+                if depth == 0:
+                    fragment = raw_html[start:next_close]
+                    break
+                pos = next_close + 6
+        if depth == 0:
             break
-    if not fragment:
+    else:
         return ""
 
     cleaned = re.sub(r"<script[\s\S]*?</script>", "", fragment, flags=re.IGNORECASE)
@@ -385,6 +409,7 @@ def admin_list_users(authorization: str | None = Header(default=None), db: Sessi
     items: list[AdminUserListItem] = []
     for u in users:
         counts = blog_map.get(u.id, {})
+        saved_post_count = int(counts.get("normal", 0)) + int(counts.get("abnormal", 0))
         group_row = group_map.get(u.group_id or 0)
         user_profile = user_profile_map.get(u.id, {})
         leader_profile = user_profile_map.get(group_row.leader_user_id, {}) if group_row and group_row.leader_user_id else {}
@@ -407,13 +432,14 @@ def admin_list_users(authorization: str | None = Header(default=None), db: Sessi
                 ),
                 blog_home_url=u.blog_home_url or "",
                 blog_enabled=bool(u.blog_enabled),
-                blog_crawl_status=u.blog_crawl_status or "idle",
+                blog_crawl_status=resolve_blog_crawl_status(u.blog_crawl_status or "idle", saved_post_count),
                 blog_last_crawled_at=u.blog_last_crawled_at,
                 application_reupload_allowed=bool(u.application_reupload_allowed),
                 pending_reupload_request_count=int(request_map.get(u.id, {}).get("application_reupload", 0)),
                 pending_signature_request_count=int(request_map.get(u.id, {}).get("signature_update", 0)),
                 application_draft_count=int(app_counts.get(u.id, 0) or 0),
                 task_draft_count=int(task_counts.get(u.id, 0) or 0),
+                gitee_url=group_row.repo_url or "" if group_row else "",
             )
         )
     return items
@@ -678,7 +704,10 @@ def admin_update_user_basic_profile(
         ),
         blog_home_url=user.blog_home_url or "",
         blog_enabled=bool(user.blog_enabled),
-        blog_crawl_status=user.blog_crawl_status or "idle",
+        blog_crawl_status=resolve_blog_crawl_status(
+            user.blog_crawl_status or "idle",
+            int(counts.get("normal", 0)) + int(counts.get("abnormal", 0)),
+        ),
         blog_last_crawled_at=user.blog_last_crawled_at,
         application_reupload_allowed=bool(user.application_reupload_allowed),
         pending_reupload_request_count=int(request_map.get("application_reupload", 0)),
@@ -734,6 +763,7 @@ def admin_create_group(
         code=_canonical_group_code(payload.group_number),
         leader_user_id=leader.id if leader else None,
         description=(payload.description or "").strip(),
+        repo_url=(payload.repo_url or "").strip() or None,
     )
     db.add(row)
     db.commit()
@@ -762,6 +792,8 @@ def admin_update_group(
     leader = _resolve_group_leader_user(db, payload.leader_student_id)
     row.leader_user_id = leader.id if leader else None
     row.description = (payload.description or "").strip()
+    if payload.repo_url is not None:
+        row.repo_url = (payload.repo_url or "").strip() or None
     db.commit()
     db.refresh(row)
     member_count = db.query(func.count(User.id)).filter(User.group_id == row.id).scalar() or 0
@@ -865,7 +897,7 @@ def admin_assign_user_group(
         blog=BlogCountInfo(normal=0, abnormal=0),
         blog_home_url=user.blog_home_url or "",
         blog_enabled=bool(user.blog_enabled),
-        blog_crawl_status=user.blog_crawl_status or "idle",
+        blog_crawl_status=resolve_blog_crawl_status(user.blog_crawl_status or "idle", 0),
         blog_last_crawled_at=user.blog_last_crawled_at,
         application_reupload_allowed=bool(user.application_reupload_allowed),
         pending_reupload_request_count=0,
@@ -886,7 +918,8 @@ def admin_get_blog_profile(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="user not found")
-    return _build_blog_profile_response(user)
+    saved_post_count = db.query(BlogPost).filter(BlogPost.user_id == user_id).count()
+    return _build_blog_profile_response(user, saved_post_count)
 
 
 @router.put("/admin/users/{user_id}/blog-profile", response_model=UserBlogProfileResponse)
@@ -912,7 +945,8 @@ def admin_update_blog_profile(
     user.blog_enabled = bool(payload.blog_enabled)
     db.commit()
     db.refresh(user)
-    return _build_blog_profile_response(user)
+    saved_post_count = db.query(BlogPost).filter(BlogPost.user_id == user_id).count()
+    return _build_blog_profile_response(user, saved_post_count)
 
 
 @router.get("/admin/users/{user_id}/requests", response_model=list[UserChangeRequestItem])
@@ -1156,6 +1190,7 @@ def admin_list_user_blogs(
             url=r.url or "",
             status=r.status,
             source=r.source,
+            summary=r.summary or r.summary_text or "",
             published_at=r.published_at,
             capture_status=r.capture_status,
             review_status=r.review_status,
@@ -1165,6 +1200,27 @@ def admin_list_user_blogs(
         )
         for r in rows
     ]
+
+
+@router.get("/admin/users/{user_id}/blogs/summary", response_model=BlogUserSummaryResponse)
+def admin_get_user_blog_summary(
+    user_id: int,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    me = _current_user(authorization, db)
+    _require_staff(me)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
+    latest_run = db.query(BlogCrawlRun).filter(BlogCrawlRun.user_id == user_id).order_by(BlogCrawlRun.id.desc()).first()
+    saved_post_count = db.query(BlogPost).filter(BlogPost.user_id == user_id).count()
+    crawl_status = resolve_blog_crawl_status(
+        getattr(latest_run, "status", None) or user.blog_crawl_status or "idle",
+        saved_post_count,
+    )
+    has_blog_url = bool(str(user.blog_home_url or "").strip())
+    return _build_user_blog_summary(db, user_id, crawl_status, has_blog_url)
 
 
 @router.post("/admin/users/{user_id}/blogs/crawl", response_model=BlogCrawlRunItem)
@@ -1179,10 +1235,13 @@ def admin_trigger_user_blog_crawl(
     if not user:
         raise HTTPException(status_code=404, detail="user not found")
     try:
-        run = run_user_blog_crawl(db=db, user=user, admin=me)
+        runs, skipped = queue_user_blog_crawls(db, [user], me)
+        if not runs:
+            detail = skipped[0]["reason"] if skipped else "无法创建抓取任务"
+            raise HTTPException(status_code=400, detail=detail)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _build_blog_run_item(run)
+    return _build_blog_run_item(runs[0])
 
 
 @router.post("/admin/blogs/crawl-batch", response_model=list[BlogCrawlRunItem])
@@ -1201,14 +1260,99 @@ def admin_trigger_batch_blog_crawl(
     missing = [user_id for user_id in user_ids if user_id not in found_ids]
     if missing:
         raise HTTPException(status_code=404, detail=f"user not found: {missing[0]}")
-    runs: list[BlogCrawlRunItem] = []
-    for user in rows:
+    try:
+        runs, skipped = queue_user_blog_crawls(db, rows, me)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = [_build_blog_run_item(run) for run in runs]
+    # Append skipped/error entries as pseudo run items so frontend can show them
+    for item in skipped:
+        result.append({
+            "id": 0,
+            "user_id": item["user_id"],
+            "blog_home_url": "",
+            "status": "skipped",
+            "total_found": 0,
+            "total_saved": 0,
+            "total_failed": 0,
+            "error_message": f"{item['student_id']}: {item['reason']}",
+            "started_at": None,
+            "finished_at": None,
+            "created_at": datetime.utcnow(),
+        })
+    return result
+
+
+@router.post("/admin/blogs/crawl-failed-or-new", response_model=list[BlogCrawlRunItem])
+def admin_crawl_failed_or_new(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Re-crawl users whose latest crawl failed, or who have never been crawled."""
+    me = _current_user(authorization, db)
+    _require_admin(me)
+
+    from app.models.blog import BlogCrawlRun as BCR, BlogPost
+
+    # Users with blog URLs configured
+    candidates = db.query(User).filter(
+        User.blog_home_url.isnot(None),
+        User.blog_home_url != "",
+        User.blog_enabled == True,
+    ).order_by(User.id).all()
+
+    # Users who already have blog posts → skip (already crawled successfully before)
+    users_with_posts = set(row[0] for row in db.query(BlogPost.user_id).distinct().all())
+
+    # Find latest run status per user
+    to_crawl: list[User] = []
+    for user in candidates:
+        # Already has blog data → skip
+        if user.id in users_with_posts:
+            continue
+
+        # Invalid/non-CSDN addresses are intentionally ignored. They remain
+        # visible on the user profile for an administrator to correct.
         try:
-            run = run_user_blog_crawl(db=db, user=user, admin=me)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"{user.student_id}: {exc}") from exc
-        runs.append(_build_blog_run_item(run))
-    return runs
+            normalize_csdn_home_input(user.blog_home_url or "")
+        except ValueError:
+            continue
+
+        latest = (
+            db.query(BCR)
+            .filter(BCR.user_id == user.id)
+            .order_by(BCR.id.desc())
+            .first()
+        )
+        if latest is None:
+            to_crawl.append(user)
+        elif latest.status in ("failed", "cancelled"):
+            to_crawl.append(user)
+
+    if not to_crawl:
+        return []
+
+    try:
+        runs, skipped = queue_user_blog_crawls(db, to_crawl, me)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    result = [_build_blog_run_item(run) for run in runs]
+    for item in skipped:
+        result.append({
+            "id": 0,
+            "user_id": item["user_id"],
+            "blog_home_url": "",
+            "status": "skipped",
+            "total_found": 0,
+            "total_saved": 0,
+            "total_failed": 0,
+            "error_message": f"{item['student_id']}: {item['reason']}",
+            "started_at": None,
+            "finished_at": None,
+            "created_at": datetime.utcnow(),
+        })
+    return result
 
 
 @router.get("/admin/users/{user_id}/blogs/crawl-runs", response_model=list[BlogCrawlRunItem])
@@ -1355,3 +1499,189 @@ def admin_review_blog(
         reviewed_at=row.reviewed_at,
         reviewed_by_admin_id=row.reviewed_by_admin_id,
     )
+
+
+def _build_user_blog_summary(db: Session, user_id: int, crawl_status: str, has_blog_url: bool) -> BlogUserSummaryResponse:
+    posts = (
+        db.query(BlogPost)
+        .filter(BlogPost.user_id == user_id)
+        .order_by(BlogPost.published_at.desc(), BlogPost.updated_at.desc())
+        .all()
+    )
+    published_dates = [item.published_at for item in posts if item.published_at]
+    span_days, risk_flags = build_blog_user_risk(
+        post_count=len(posts),
+        published_dates=published_dates,
+        has_code_only=any(bool(item.is_mostly_code) for item in posts),
+        has_empty_popular_science=any(bool(item.is_popular_science) and not loads_work_items(item.work_items_json) for item in posts),
+        crawl_status=crawl_status,
+        has_blog_url=has_blog_url,
+    )
+
+    work_items: list[str] = []
+    seen_items: set[str] = set()
+    for post in posts:
+        for item in loads_work_items(post.work_items_json):
+            text = str(item).strip()
+            if text and text not in seen_items:
+                seen_items.add(text)
+                work_items.append(text)
+            if len(work_items) >= 20:
+                break
+        if len(work_items) >= 20:
+            break
+
+    summary_parts: list[str] = []
+    for post in posts:
+        text = str(post.summary_text or post.summary or "").strip()
+        if not text:
+            continue
+        summary_parts.append(text)
+        if len("；".join(summary_parts)) >= 600:
+            break
+
+    return BlogUserSummaryResponse(
+        user_id=user_id,
+        post_count=len(posts),
+        project_post_count=sum(1 for item in posts if str(item.category or "").startswith("project_")),
+        code_dump_count=sum(1 for item in posts if bool(item.is_mostly_code) or item.category in {"code_dump", "project_code_dump"}),
+        popular_science_count=sum(1 for item in posts if bool(item.is_popular_science) or item.category in {"popular_science", "project_science"}),
+        recent_eight_span_days=span_days,
+        latest_published_at=max(published_dates) if published_dates else None,
+        earliest_published_at=min(published_dates) if published_dates else None,
+        risk_flags=risk_flags,
+        summary_text="；".join(summary_parts)[:1000],
+        work_items=work_items,
+    )
+
+
+@router.post("/admin/blogs/re-evaluate", response_model=BlogReevaluateResponse)
+def admin_re_evaluate_selected_blogs(
+    payload: BlogReevaluatePayload,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    me = _current_user(authorization, db)
+    _require_admin(me)
+    blog_ids = sorted({int(v) for v in (payload.blog_ids or []) if int(v) > 0})
+    if not blog_ids:
+        raise HTTPException(status_code=400, detail="blog_ids is required")
+    posts = db.query(BlogPost).filter(BlogPost.id.in_(blog_ids)).order_by(BlogPost.user_id.asc(), BlogPost.id.asc()).all()
+    found_ids = {int(post.id) for post in posts}
+    missing_ids = [blog_id for blog_id in blog_ids if blog_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(status_code=404, detail=f"blog not found: {missing_ids[0]}")
+    result = re_evaluate_blog_posts(db, posts)
+    return BlogReevaluateResponse(**result)
+
+
+@router.post("/admin/blogs/re-evaluate-all", response_model=BlogReevaluateResponse)
+def admin_re_evaluate_all_blogs(
+    authorization: str | None = Header(default=None),
+    user_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    me = _current_user(authorization, db)
+    _require_admin(me)
+    query = db.query(BlogPost)
+    if user_id is not None:
+        query = query.filter(BlogPost.user_id == user_id)
+    posts = query.order_by(BlogPost.user_id.asc(), BlogPost.id.asc()).all()
+    result = re_evaluate_blog_posts(db, posts)
+    return BlogReevaluateResponse(**result)
+
+
+# ── CSV Export ──────────────────────────────────────────────────
+
+@router.get("/admin/blogs/export-csv")
+def admin_export_blogs_csv(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Export blog metrics as CSV."""
+    me = _current_user(authorization, db)
+    _require_admin(me)
+
+    from io import StringIO
+    import csv
+    from app.models.blog import BlogCrawlRun as BCR
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "学号", "姓名", "博客地址", "项目博客数量", "抓取状态",
+        "存在纯代码博客", "纯代码博客数量",
+        "存在纯科普博客", "纯科普博客数量",
+        "少于8篇", "总文章数"
+    ])
+
+    users = db.query(User).filter(
+        User.blog_home_url.isnot(None), User.blog_home_url != ""
+    ).order_by(User.student_id).all()
+
+    for u in users:
+        posts = db.query(BlogPost).filter(BlogPost.user_id == u.id).all()
+        post_count = len(posts)
+        project_posts = [p for p in posts if p.category in ("project_update", "project_code_dump")]
+        project_count = len(project_posts)
+        # Only count code/science blogs WITHIN project blogs
+        code_count = sum(1 for p in project_posts if p.is_mostly_code)
+        science_count = sum(1 for p in project_posts if p.is_popular_science)
+
+        # Latest crawl status
+        latest_run = db.query(BCR).filter(BCR.user_id == u.id).order_by(BCR.id.desc()).first()
+        crawl_status = latest_run.status if latest_run else "never"
+
+        writer.writerow([
+            u.student_id,
+            u.real_name or "",
+            u.blog_home_url or "",
+            project_count,
+            crawl_status,
+            "是" if code_count > 0 else "否",
+            code_count,
+            "是" if science_count > 0 else "否",
+            science_count,
+            "是" if post_count < 8 else "否",
+            post_count,
+        ])
+
+    return Response(
+        content=output.getvalue().encode("utf-8-sig"),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=blog_metrics.csv"},
+    )
+
+
+# ── Toggle Blog Category ────────────────────────────────────────
+
+class BlogCategoryPayload(BaseModel):
+    category: str  # project_update / code_dump / popular_science / unrelated
+
+
+@router.put("/admin/users/{user_id}/blogs/{blog_id}/category")
+def admin_update_blog_category(
+    user_id: int,
+    blog_id: int,
+    payload: BlogCategoryPayload,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Admin manually changes a blog post's category."""
+    me = _current_user(authorization, db)
+    _require_admin(me)
+
+    valid_cats = {"project_update", "project_code_dump", "code_dump", "popular_science", "unrelated", "mixed"}
+    if payload.category not in valid_cats:
+        raise HTTPException(status_code=400, detail=f"无效分类，可选: {', '.join(sorted(valid_cats))}")
+
+    post = db.query(BlogPost).filter(BlogPost.id == blog_id, BlogPost.user_id == user_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="blog not found")
+
+    post.category = payload.category
+    post.review_status = "reviewed"
+    post.reviewed_at = datetime.utcnow()
+    post.reviewed_by_admin_id = me.id
+    db.commit()
+    return {"id": post.id, "category": post.category, "status": "ok"}

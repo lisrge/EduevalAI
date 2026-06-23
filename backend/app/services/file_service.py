@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -23,7 +24,8 @@ def ensure_storage_dirs() -> None:
 
 def _safe_name(name: str | None, fallback: str) -> str:
     raw = os.path.basename(name or fallback).strip()
-    return raw or fallback
+    raw = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", raw).strip(". ")
+    return raw[:240] or fallback
 
 
 def _session_dir(upload_id: str) -> Path:
@@ -101,7 +103,7 @@ async def save_upload_file(upload_file: UploadFile) -> tuple[str, str]:
     settings = get_settings()
 
     original_name = upload_file.filename or "application"
-    safe_name = os.path.basename(original_name)
+    safe_name = _safe_name(original_name, "application")
     file_id = uuid4().hex
     target_path = settings.application_storage_path / f"{file_id}_{safe_name}"
 
@@ -114,7 +116,7 @@ async def save_user_file(upload_file: UploadFile, subdir: str) -> tuple[str, str
     settings = get_settings()
 
     original_name = upload_file.filename or "file"
-    safe_name = os.path.basename(original_name)
+    safe_name = _safe_name(original_name, "file")
     file_id = uuid4().hex
     target_dir = settings.storage_path / subdir
     target_dir.mkdir(parents=True, exist_ok=True)

@@ -4,14 +4,17 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import PlainTextResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.base import get_db
-from app.models.blog import BlogPost, BlogSource
+from app.models.blog import BlogAuditItem, BlogCrawlRun, BlogPost, BlogSource
 from app.models.document_draft import ApplicationDraft, TaskDraft
+from app.models.group import UserGroup
 from app.models.user import User
 from app.schemas.blog import (
     BlogCrawlResponse,
+    BlogAuditInfo,
     BlogOverviewItem,
     BlogOverviewSummary,
     BlogPostDetail,
@@ -20,7 +23,13 @@ from app.schemas.blog import (
     BlogSourcePayload,
 )
 from app.services.auth_service import get_user_by_token
-from app.services.blog_crawler_service import crawl_blog_source, loads_work_items
+from app.services.blog_crawler_service import (
+    build_blog_user_risk,
+    crawl_blog_source,
+    loads_work_items,
+    resolve_blog_crawl_status,
+)
+from app.services.blog_crawl_job_service import queue_user_blog_crawls
 from app.services.blog_source_import_service import import_blog_sources_from_draft_content
 
 router = APIRouter(prefix="/blogs", tags=["blogs"])
@@ -90,9 +99,24 @@ def admin_blog_overview(
     me = _current_user(authorization, db)
     _require_admin(me)
 
-    users = {item.id: item for item in db.query(User).order_by(User.id.asc()).all()}
+    users = {
+        item.id: item
+        for item in db.query(User).filter(User.role == "user").order_by(User.id.asc()).all()
+    }
     sources = db.query(BlogSource).order_by(BlogSource.id.asc()).all()
     posts = db.query(BlogPost).order_by(BlogPost.published_at.desc(), BlogPost.updated_at.desc()).all()
+    audits = db.query(BlogAuditItem).order_by(BlogAuditItem.published_at.desc()).all()
+    latest_runs = {}
+    for run in db.query(BlogCrawlRun).order_by(BlogCrawlRun.created_at.desc()).all():
+        latest_runs.setdefault(int(run.user_id), run)
+
+    # Build user_id -> group repo_url map
+    groups = db.query(UserGroup).all()
+    group_repo_map: dict[int, str] = {g.id: (g.repo_url or "") for g in groups}
+    user_repo_map: dict[int, str] = {}
+    for u in users.values():
+        if u.group_id and u.group_id in group_repo_map:
+            user_repo_map[u.id] = group_repo_map[u.group_id]
 
     source_count_map: dict[int, list[BlogSource]] = defaultdict(list)
     for source in sources:
@@ -102,15 +126,36 @@ def admin_blog_overview(
     post_map: dict[int, list[BlogPost]] = defaultdict(list)
     for post in posts:
         post_map[int(post.user_id)].append(post)
+    audit_map: dict[int, list[BlogAuditItem]] = defaultdict(list)
+    for audit in audits:
+        audit_map[int(audit.user_id)].append(audit)
 
     items: list[BlogOverviewItem] = []
     for user_id, user in users.items():
         user_sources = source_count_map.get(int(user_id), [])
         user_posts = post_map.get(int(user_id), [])
+        user_audits = audit_map.get(int(user_id), [])
         latest_published_at = None
         if user_posts:
             latest_published_at = max([item.published_at or item.updated_at for item in user_posts])
         work_item_count = sum(len(loads_work_items(item.work_items_json)) for item in user_posts)
+        dated_posts = sorted([item.published_at for item in user_posts if item.published_at], reverse=True)
+        low_quality_count = sum(1 for item in user_audits if item.is_mostly_code or item.is_popular_science)
+        latest_run = latest_runs.get(int(user_id))
+        crawl_status = resolve_blog_crawl_status(
+            getattr(latest_run, "status", None) or user.blog_crawl_status or "idle",
+            len(user_posts),
+        )
+        span_days, risk_flags = build_blog_user_risk(
+            post_count=len(user_posts),
+            published_dates=dated_posts,
+            has_code_only=any(item.is_mostly_code for item in user_audits),
+            has_empty_popular_science=any(
+                item.is_popular_science and not item.has_actual_work for item in user_audits
+            ),
+            crawl_status=crawl_status,
+            has_blog_url=bool(str(user.blog_home_url or "").strip() or user_sources),
+        )
         items.append(
             BlogOverviewItem(
                 user_id=int(user_id),
@@ -134,6 +179,18 @@ def admin_blog_overview(
                 ),
                 work_item_count=work_item_count,
                 latest_published_at=latest_published_at,
+                earliest_published_at=min(dated_posts) if dated_posts else None,
+                recent_eight_span_days=span_days,
+                scanned_blog_count=len(user_audits),
+                published_time_count=sum(1 for item in user_audits if item.published_at),
+                low_quality_count=low_quality_count,
+                filtered_popular_science_count=sum(
+                    1 for item in user_audits if item.is_popular_science and not item.is_project_training
+                ),
+                crawl_status=crawl_status,
+                crawl_error=getattr(latest_run, "error_message", None) or None,
+                risk_flags=risk_flags,
+                gitee_url=user_repo_map.get(int(user_id), ""),
             )
         )
 
@@ -145,8 +202,32 @@ def admin_blog_overview(
         total_project_blog_posts=sum(
             1 for item in posts if post_source_type_map.get(int(item.source_id or 0), "personal") == "project_group"
         ),
+        incomplete_user_count=sum(1 for item in items if "blog_count_below_8" in item.risk_flags),
+        failed_user_count=sum(1 for item in items if "crawl_failed_retry_required" in item.risk_flags),
+        burst_posting_user_count=sum(
+            1
+            for item in items
+            if "eight_posts_within_1_week" in item.risk_flags or "eight_posts_within_2_weeks" in item.risk_flags
+        ),
         users=items,
     )
+
+
+@router.get("/admin/users/{user_id}/audit-items", response_model=list[BlogAuditInfo])
+def admin_list_user_blog_audits(
+    user_id: int,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    me = _current_user(authorization, db)
+    _require_admin(me)
+    return [
+        BlogAuditInfo.model_validate(item, from_attributes=True)
+        for item in db.query(BlogAuditItem)
+        .filter(BlogAuditItem.user_id == user_id)
+        .order_by(BlogAuditItem.published_at.desc(), BlogAuditItem.last_seen_at.desc())
+        .all()
+    ]
 
 
 @router.get("/admin/users/{user_id}/sources", response_model=list[BlogSourceInfo])
@@ -228,6 +309,8 @@ def admin_crawl_blog_source(
         crawled_count=int(result["crawled_count"]),
         created_count=int(result["created_count"]),
         updated_count=int(result["updated_count"]),
+        filtered_count=int(result.get("filtered_count") or 0),
+        screenshot_failed_count=int(result.get("screenshot_failed_count") or 0),
     )
 
 
@@ -238,23 +321,55 @@ def admin_crawl_all_blog_sources(
 ):
     me = _current_user(authorization, db)
     _require_admin(me)
-    sources = db.query(BlogSource).filter(BlogSource.is_active == True).order_by(BlogSource.id.asc()).all()
-    total_sources = 0
-    total_posts = 0
-    total_created = 0
-    total_updated = 0
-    for source in sources:
-        result = crawl_blog_source(db, source)
-        total_sources += 1
-        total_posts += int(result["crawled_count"])
-        total_created += int(result["created_count"])
-        total_updated += int(result["updated_count"])
+    users = (
+        db.query(User)
+        .filter(
+            User.role == "user",
+            User.blog_enabled == True,
+            User.blog_home_url.isnot(None),
+            User.blog_home_url != "",
+        )
+        .order_by(User.id.asc())
+        .all()
+    )
+    runs = queue_user_blog_crawls(db, users, me)
     return {
-        "message": "all blog sources crawled",
-        "source_count": total_sources,
-        "crawled_count": total_posts,
-        "created_count": total_created,
-        "updated_count": total_updated,
+        "message": "blog crawl jobs queued",
+        "queued_count": len(runs),
+        "source_count": len(users),
+    }
+
+
+@router.post("/admin/retry-incomplete", response_model=dict)
+def admin_retry_incomplete_blog_users(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    me = _current_user(authorization, db)
+    _require_admin(me)
+    users = (
+        db.query(User)
+        .filter(User.role == "user", User.blog_enabled == True)
+        .order_by(User.id.asc())
+        .all()
+    )
+    post_counts = dict(
+        db.query(BlogPost.user_id, func.count(BlogPost.id)).group_by(BlogPost.user_id).all()
+    )
+    incomplete = [
+        user
+        for user in users
+        if int(post_counts.get(user.id, 0)) < 8
+        or str(user.blog_crawl_status or "") in {"failed", "partial_success"}
+    ]
+    eligible = [user for user in incomplete if str(user.blog_home_url or "").strip()]
+    blocked = [user.id for user in incomplete if not str(user.blog_home_url or "").strip()]
+    runs = queue_user_blog_crawls(db, eligible, me)
+    return {
+        "message": "incomplete users queued for retry",
+        "queued_count": len(runs),
+        "queued_user_ids": [run.user_id for run in runs],
+        "missing_blog_url_user_ids": blocked,
     }
 
 
