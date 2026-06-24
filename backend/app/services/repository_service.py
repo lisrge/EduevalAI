@@ -107,6 +107,15 @@ def _archive_download_urls(binding: RepoBinding, branch: str) -> list[str]:
     ]
 
 
+def _candidate_branches(binding: RepoBinding) -> list[str]:
+    branches: list[str] = []
+    for candidate in (binding.default_branch, "master", "main"):
+        name = str(candidate or "").strip()
+        if name and name not in branches:
+            branches.append(name)
+    return branches or ["master", "main"]
+
+
 def _browser_fetch_json(page, url: str):
     return page.evaluate(
         """async ({ url }) => {
@@ -203,24 +212,32 @@ def _fetch_graph_payload_via_browser(binding: RepoBinding, branch: str) -> dict:
             pass
 
 
-def _fetch_graph_payload(binding: RepoBinding, branch: str) -> dict:
-    graph_json_url = f"https://gitee.com/{binding.repo_owner}/{binding.repo_name}/graph/{branch}.json"
-    try:
-        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-            response = client.get(
-                graph_json_url,
-                headers={
-                    "Accept": "application/json,text/plain,*/*",
-                    "User-Agent": "Mozilla/5.0",
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
+def _fetch_graph_payload(binding: RepoBinding, branch: str) -> tuple[dict, str]:
+    errors: list[str] = []
+    for candidate in _candidate_branches(binding):
+        graph_json_url = f"https://gitee.com/{binding.repo_owner}/{binding.repo_name}/graph/{candidate}.json"
+        try:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                response = client.get(
+                    graph_json_url,
+                    headers={
+                        "Accept": "application/json,text/plain,*/*",
+                        "User-Agent": "Mozilla/5.0",
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if isinstance(payload, dict) and isinstance(payload.get("commits"), list):
+                    return payload, candidate
+        except Exception as exc:
+            errors.append(f"{candidate}:{exc}")
+        try:
+            payload = _fetch_graph_payload_via_browser(binding, candidate)
             if isinstance(payload, dict) and isinstance(payload.get("commits"), list):
-                return payload
-    except Exception:
-        pass
-    return _fetch_graph_payload_via_browser(binding, branch)
+                return payload, candidate
+        except Exception as exc:
+            errors.append(f"{candidate}:browser:{exc}")
+    raise HTTPException(status_code=502, detail=f"gitee graph fetch failed: {' | '.join(errors[:6])}")
 
 
 def _extract_commit_stats(item: dict) -> tuple[int, int, int]:
@@ -250,8 +267,7 @@ def sync_gitee_repo(db: Session, binding: RepoBinding, max_pages: int = 3, per_p
     }
 
     try:
-        branch = (binding.default_branch or "").strip() or "master"
-        payload = _fetch_graph_payload(binding, branch)
+        payload, resolved_branch = _fetch_graph_payload(binding, (binding.default_branch or "").strip() or "master")
         commits = list(payload.get("commits") or [])
         if max_pages > 0 and per_page > 0:
             commits = commits[: max_pages * per_page]
@@ -285,6 +301,8 @@ def sync_gitee_repo(db: Session, binding: RepoBinding, max_pages: int = 3, per_p
             existing_hashes.add(commit_hash)
             inserted += 1
 
+        if resolved_branch and str(binding.default_branch or "").strip() != resolved_branch:
+            binding.default_branch = resolved_branch
         binding.sync_status = "synced"
         binding.last_error = None
         binding.last_sync_at = datetime.utcnow()
@@ -479,17 +497,12 @@ def repo_insight_needs_refresh(binding: RepoBinding | None, cached: dict | None 
 
 
 def _download_repo_archive(binding: RepoBinding) -> str:
-    branch_candidates: list[str] = []
-    for candidate in (binding.default_branch, "master", "main"):
-        name = str(candidate or "").strip()
-        if name and name not in branch_candidates:
-            branch_candidates.append(name)
     errors: list[str] = []
     headers = {
         "Accept": "application/zip,application/octet-stream,*/*",
         "User-Agent": "Mozilla/5.0",
     }
-    for branch in branch_candidates:
+    for branch in _candidate_branches(binding):
         for url in _archive_download_urls(binding, branch):
             suffix = f"-{binding.repo_owner}-{binding.repo_name}-{branch}.zip"
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -515,13 +528,8 @@ def _clone_repo_to_tempdir(binding: RepoBinding) -> str:
     git_bin = shutil.which("git")
     if not git_bin:
         raise RuntimeError("git executable not found")
-    branch_candidates: list[str] = []
-    for candidate in (binding.default_branch, "master", "main"):
-        name = str(candidate or "").strip()
-        if name and name not in branch_candidates:
-            branch_candidates.append(name)
     last_error = "unknown"
-    for branch in branch_candidates:
+    for branch in _candidate_branches(binding):
         temp_root = tempfile.mkdtemp(prefix=f"gitee-repo-{binding.id}-")
         repo_dir = str(Path(temp_root) / "repo")
         try:
