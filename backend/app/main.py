@@ -71,6 +71,8 @@ async def site_basic_auth_guard(request: Request, call_next):
         return await call_next(request)
     if request.method.upper() == "OPTIONS":
         return await call_next(request)
+    if request.url.path == "/api" or request.url.path.startswith("/api/"):
+        return await call_next(request)
 
     credentials = _parse_basic_auth(request.headers.get("Authorization", ""))
     if not credentials:
