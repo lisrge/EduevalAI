@@ -1,7 +1,10 @@
 import asyncio
+import base64
+import binascii
+import secrets
 import sys
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +42,48 @@ if sys.platform.startswith("win"):
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
 frontend_dist = (settings.backend_root.parent / "fronted" / "dist").resolve()
+
+
+def _basic_auth_unauthorized() -> Response:
+    return Response(
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="EduevalAI Beta"'},
+    )
+
+
+def _parse_basic_auth(authorization: str) -> tuple[str, str] | None:
+    if not authorization or not authorization.startswith("Basic "):
+        return None
+    try:
+        encoded = authorization.split(" ", 1)[1].strip()
+        decoded = base64.b64decode(encoded).decode("utf-8")
+        username, password = decoded.split(":", 1)
+        return username, password
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        return None
+
+
+@app.middleware("http")
+async def site_basic_auth_guard(request: Request, call_next):
+    expected_username = (settings.site_basic_auth_username or "").strip()
+    expected_password = settings.site_basic_auth_password or ""
+    if not expected_username or not expected_password:
+        return await call_next(request)
+    if request.method.upper() == "OPTIONS":
+        return await call_next(request)
+
+    credentials = _parse_basic_auth(request.headers.get("Authorization", ""))
+    if not credentials:
+        return _basic_auth_unauthorized()
+
+    username, password = credentials
+    if not (
+        secrets.compare_digest(username, expected_username)
+        and secrets.compare_digest(password, expected_password)
+    ):
+        return _basic_auth_unauthorized()
+
+    return await call_next(request)
 
 allow_all_origins = settings.cors_origin_list == ["*"]
 app.add_middleware(

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_host: str = "0.0.0.0"
     app_port: int = 8001
+    site_basic_auth_username: str | None = None
+    site_basic_auth_password: str | None = None
 
     database_url: str = "sqlite+pysqlite:///./edueval_ai.sqlite3"
 
