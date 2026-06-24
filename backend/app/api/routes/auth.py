@@ -26,6 +26,7 @@ def _to_public(user: User) -> UserPublic:
         real_name=user.real_name or "",
         role=user.role,
         is_root_admin=user.is_root_admin,
+        group_id=user.group_id,
         application_reupload_allowed=bool(user.application_reupload_allowed),
         created_at=user.created_at,
     )

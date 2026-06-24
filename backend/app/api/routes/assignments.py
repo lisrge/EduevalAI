@@ -32,6 +32,22 @@ def _parse_required_asset_types(value: str | None) -> list[str]:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
+def _submission_upload_state(submission: AssignmentSubmission | None) -> str | None:
+    if not submission:
+        return None
+    latest: dict[str, str] = {}
+    for asset in sorted(list(submission.assets or []), key=lambda item: (item.asset_type, item.version_no, item.created_at), reverse=True):
+        latest.setdefault(str(asset.asset_type or ""), str(asset.upload_status or "uploaded"))
+    statuses = [status for status in latest.values() if status]
+    if any(status == "failed" for status in statuses):
+        return "failed"
+    if any(status == "uploading" for status in statuses):
+        return "uploading"
+    if statuses:
+        return "normal"
+    return None
+
+
 def _to_summary(assignment: Assignment, my_submission: AssignmentSubmission | None) -> AssignmentSummary:
     return AssignmentSummary(
         id=assignment.id,
@@ -51,6 +67,7 @@ def _to_summary(assignment: Assignment, my_submission: AssignmentSubmission | No
         my_submission_id=my_submission.id if my_submission else None,
         my_submission_status=my_submission.status if my_submission else None,
         my_completeness_status=my_submission.completeness_status if my_submission else None,
+        my_upload_state=_submission_upload_state(my_submission),
         created_at=assignment.created_at,
         updated_at=assignment.updated_at,
     )
@@ -64,13 +81,16 @@ def list_assignments(
     user = _current_user(authorization, db)
     assignments = (
         db.query(Assignment)
-        .options(selectinload(Assignment.course), selectinload(Assignment.submissions))
+        .options(selectinload(Assignment.course), selectinload(Assignment.submissions).selectinload(AssignmentSubmission.assets))
         .order_by(Assignment.week_index.desc(), Assignment.updated_at.desc())
         .all()
     )
     result: list[AssignmentSummary] = []
     for assignment in assignments:
-        my_submission = next((item for item in assignment.submissions if item.submitter_user_id == user.id), None)
+        if user.group_id:
+            my_submission = next((item for item in assignment.submissions if getattr(item, "group_id", None) == user.group_id), None)
+        else:
+            my_submission = next((item for item in assignment.submissions if item.submitter_user_id == user.id), None)
         result.append(_to_summary(assignment, my_submission))
     return result
 
@@ -84,11 +104,14 @@ def get_assignment(
     user = _current_user(authorization, db)
     assignment = (
         db.query(Assignment)
-        .options(selectinload(Assignment.course), selectinload(Assignment.submissions))
+        .options(selectinload(Assignment.course), selectinload(Assignment.submissions).selectinload(AssignmentSubmission.assets))
         .filter(Assignment.id == assignment_id)
         .first()
     )
     if not assignment:
         raise HTTPException(status_code=404, detail="assignment not found")
-    my_submission = next((item for item in assignment.submissions if item.submitter_user_id == user.id), None)
+    if user.group_id:
+        my_submission = next((item for item in assignment.submissions if getattr(item, "group_id", None) == user.group_id), None)
+    else:
+        my_submission = next((item for item in assignment.submissions if item.submitter_user_id == user.id), None)
     return _to_summary(assignment, my_submission)

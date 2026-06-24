@@ -14,6 +14,8 @@ class UserChangeRequest(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    group_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    assignment_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
     request_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False, index=True)
     request_note: Mapped[str] = mapped_column(Text, default="", nullable=False)

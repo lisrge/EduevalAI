@@ -188,3 +188,60 @@ class RepoMemberProgressResponse(BaseModel):
     total_submissions: int = 0
     risk_flags: list[str] = Field(default_factory=list)
     items: list[RepoMemberProgressItem] = Field(default_factory=list)
+
+
+class RepoLanguageBreakdownItem(BaseModel):
+    language: str
+    lines: int = 0
+    percent: float = 0
+    color: str = ""
+
+
+class RepoCodeSummarySnapshot(BaseModel):
+    archive_format: str = "zip"
+    total_files: int = 0
+    source_file_count: int = 0
+    total_lines: int = 0
+    total_bytes: int = 0
+    estimated_kb: float = 0
+    dominant_language: str | None = None
+    risk_level: str = "unknown"
+    risk_flags: list[str] = Field(default_factory=list)
+    languages: list[RepoLanguageBreakdownItem] = Field(default_factory=list)
+
+
+class RepoMemberWorkloadSnapshot(BaseModel):
+    user_id: int | None = None
+    member_id: int | None = None
+    student_id: str = ""
+    real_name: str = ""
+    gitee_login: str = ""
+    gitee_display_name: str = ""
+    contribution_source: str = "mixed"
+    commit_count: int = 0
+    additions: int = 0
+    deletions: int = 0
+    changed_files: int = 0
+    workload_value: int = 0
+    workload_percent: float = 0
+
+
+class AdminUserRepoInsightResponse(BaseModel):
+    user_id: int
+    student_id: str
+    real_name: str = ""
+    group_id: int | None = None
+    group_number: int | None = None
+    group_name: str = ""
+    project_name: str = ""
+    repo_url: str = ""
+    binding_id: int | None = None
+    sync_status: str = "never_bound"
+    last_sync_at: datetime | None = None
+    analysis_generated_at: datetime | None = None
+    analysis_state: str = "ready"
+    analysis_stale: bool = False
+    analysis_message: str = ""
+    code_summary: RepoCodeSummarySnapshot = Field(default_factory=RepoCodeSummarySnapshot)
+    members: list[RepoMemberWorkloadSnapshot] = Field(default_factory=list)
+    risk_flags: list[str] = Field(default_factory=list)

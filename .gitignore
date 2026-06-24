@@ -1,8 +1,10 @@
 # IDE
 .idea/
+.dbg/
 
 # Claude Code
 .claude/
+fronted/.agents/
 
 # Python
 __pycache__/

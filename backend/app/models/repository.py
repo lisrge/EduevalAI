@@ -28,6 +28,8 @@ class RepoBinding(Base):
     last_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_auto_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_error: Mapped[Optional[str]] = mapped_column(Text)
+    analysis_summary_json: Mapped[Optional[str]] = mapped_column(Text)
+    analysis_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

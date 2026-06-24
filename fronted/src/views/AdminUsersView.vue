@@ -5,7 +5,7 @@
     <div class="admin-shell">
       <section class="admin-hero">
         <div>
-          <p class="hero-eyebrow">Admin Console</p>
+          <p class="hero-eyebrow">管理员控制台</p>
           <h2>管理员用户与博客管理</h2>
           <p class="hero-copy">
             在一个页面里处理用户权限、分组、博客取证入口和待审核申请。
@@ -173,8 +173,13 @@
                   </div>
                 </td>
                 <td>
-                  <a v-if="u.gitee_url" :href="u.gitee_url" target="_blank" class="origin-link" style="font-size:12px;">{{ u.gitee_url.split('/').pop() || 'Gitee' }}</a>
-                  <span v-else style="color:#999;font-size:12px;">-</span>
+                  <div class="inline-stack">
+                    <a v-if="u.gitee_url" :href="u.gitee_url" target="_blank" class="origin-link" style="font-size:12px;">{{ u.gitee_url.split('/').pop() || 'Gitee' }}</a>
+                    <span v-else style="color:#999;font-size:12px;">-</span>
+                    <button class="ghost-button compact-button" type="button" :disabled="!u.gitee_url" @click="goGiteeInsight(u)">
+                      详情
+                    </button>
+                  </div>
                 </td>
                 <td>
                   <div class="inline-stack">
@@ -623,6 +628,10 @@ function goDocuments(user, type) {
 
 function goBlogs(user) {
   router.push({ name: 'admin-user-blogs', params: { userId: String(user.id) } });
+}
+
+function goGiteeInsight(user) {
+  router.push({ name: 'admin-user-gitee-insight', params: { userId: String(user.id) } });
 }
 
 async function loadUsers() {

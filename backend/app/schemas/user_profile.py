@@ -9,6 +9,7 @@ class ProfileResponse(BaseModel):
     created_at: datetime
     signature_file_name: str
     signature_url: str
+    has_signature: bool = False
     application_reupload_allowed: bool = False
     pending_reupload_request: bool = False
     pending_signature_request: bool = False

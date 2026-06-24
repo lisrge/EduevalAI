@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -15,11 +15,13 @@ class AssignmentSubmission(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     assignment_id: Mapped[int] = mapped_column(ForeignKey("assignments.id", ondelete="CASCADE"), index=True)
     submitter_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    group_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
     student_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     student_name: Mapped[str] = mapped_column(String(100), default="unknown", nullable=False)
     group_name: Mapped[Optional[str]] = mapped_column(String(200))
     project_name: Mapped[Optional[str]] = mapped_column(String(255))
     statement_text: Mapped[Optional[str]] = mapped_column(Text)
+    teacher_review_ai_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False)
     completeness_status: Mapped[str] = mapped_column(String(30), default="incomplete", nullable=False)
     submitted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
@@ -93,7 +95,7 @@ class SubmissionAsset(Base):
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str] = mapped_column(String(800), nullable=False)
     mime_type: Mapped[Optional[str]] = mapped_column(String(120))
-    file_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    file_size: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     file_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True)
     version_no: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     upload_status: Mapped[str] = mapped_column(String(30), default="uploaded", nullable=False)

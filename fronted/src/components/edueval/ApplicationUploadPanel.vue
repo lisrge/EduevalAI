@@ -3,7 +3,7 @@
     <div class="panel-header">
       <div>
         <h2>申请书上传</h2>
-        <p class="panel-subtitle">支持 PDF / DOCX / TXT / MD。学生仅可查看自己的申请书，不显示评分。</p>
+        <p class="panel-subtitle">支持 PDF / DOCX / TXT / MD。学生仅可查看本组申请书，不显示评分。</p>
       </div>
     </div>
 
@@ -26,12 +26,8 @@
       </div>
 
       <label class="field field-wide checkbox-field">
-        <span>上传策略</span>
-        <label v-if="allowScoring" class="checkbox-row">
-          <input v-model="autoScore" type="checkbox" :disabled="submitting" />
-          <span>上传后立即评分</span>
-        </label>
-        <span v-else class="panel-subtitle">普通用户没有评分查看与评分触发权限。</span>
+        <span>评分策略</span>
+        <span class="panel-subtitle">上传后自动评分默认开启（后台处理）。</span>
       </label>
 
       <div v-if="files.length > 0" class="field field-wide">
@@ -72,7 +68,6 @@ const emit = defineEmits(['submit']);
 
 const fileInputRef = ref(null);
 const files = ref([]);
-const autoScore = ref(true);
 
 const uploadButtonText = computed(() => (files.value.length ? `开始上传 (${files.value.length})` : '开始上传'));
 
@@ -81,11 +76,29 @@ function handleFileChange(event) {
 }
 
 function submitForm() {
-  emit('submit', { files: files.value, autoScore: props.allowScoring ? autoScore.value : false });
+  emit('submit', { files: files.value, autoScore: true });
   files.value = [];
-  autoScore.value = true;
   if (fileInputRef.value) {
     fileInputRef.value.value = '';
   }
 }
 </script>
+
+<style scoped>
+.checkbox-field {
+  align-items: start;
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: fit-content;
+  margin-top: 6px;
+}
+
+.checkbox-row input {
+  margin: 0;
+}
+</style>

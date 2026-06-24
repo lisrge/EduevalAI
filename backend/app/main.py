@@ -12,6 +12,7 @@ from app.api.routes.assignments import router as assignments_router
 from app.api.routes.blogs import router as blogs_router
 from app.api.routes.document_drafts import router as drafts_router
 from app.api.routes.document_imports import router as document_imports_router
+from app.api.routes.live_events import router as live_events_router
 from app.api.routes.exports import router as exports_router
 from app.api.routes.health import router as health_router
 from app.api.routes.repositories import router as repositories_router
@@ -23,6 +24,11 @@ from app.core.config import get_settings
 from app.db.init_db import init_db
 from app.services.repo_scheduler_service import start_repo_scheduler, stop_repo_scheduler
 from app.services.blog_crawl_job_service import start_blog_crawl_worker, stop_blog_crawl_worker
+from app.services.live_event_service import configure_live_event_loop
+from app.services.teacher_score_scheduler_service import (
+    start_teacher_score_scheduler,
+    stop_teacher_score_scheduler,
+)
 
 if sys.platform.startswith("win"):
     try:
@@ -49,6 +55,7 @@ app.include_router(users_router, prefix="/api")
 app.include_router(blogs_router, prefix="/api")
 app.include_router(drafts_router, prefix="/api")
 app.include_router(document_imports_router, prefix="/api")
+app.include_router(live_events_router, prefix="/api")
 app.include_router(applications_router, prefix="/api")
 app.include_router(assignments_router, prefix="/api")
 app.include_router(submissions_router, prefix="/api")
@@ -59,16 +66,22 @@ app.include_router(exports_router, prefix="/api")
 
 
 @app.on_event("startup")
-def _on_startup() -> None:
+async def _on_startup() -> None:
+    configure_live_event_loop(asyncio.get_running_loop())
     init_db()
     if settings.blog_crawler_enabled:
         start_blog_crawl_worker()
     if settings.repo_auto_sync_enabled:
         start_repo_scheduler()
+    if settings.teacher_score_refresh_enabled:
+        start_teacher_score_scheduler()
 
 
 @app.on_event("shutdown")
-def _on_shutdown() -> None:
+async def _on_shutdown() -> None:
+    configure_live_event_loop(None)
+    if settings.teacher_score_refresh_enabled:
+        stop_teacher_score_scheduler()
     if settings.repo_auto_sync_enabled:
         stop_repo_scheduler()
     if settings.blog_crawler_enabled:

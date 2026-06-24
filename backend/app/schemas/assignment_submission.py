@@ -26,6 +26,7 @@ class AssignmentSummary(BaseModel):
     my_submission_id: Optional[int] = None
     my_submission_status: Optional[str] = None
     my_completeness_status: Optional[str] = None
+    my_upload_state: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -79,6 +80,7 @@ class SubmissionTeacherScoreSummary(BaseModel):
     assigned_teacher_count: int = 0
     score_count: int = 0
     average_total_score: float = 0
+    average_group_total_score: float = 0
     reviewed_teacher_ids: list[int] = Field(default_factory=list)
 
 
@@ -102,6 +104,7 @@ class SubmissionSummary(BaseModel):
     status: str
     completeness_status: str
     submitted_at: Optional[datetime] = None
+    upload_state: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     asset_count: int
@@ -120,12 +123,79 @@ class SubmissionDetail(SubmissionSummary):
     missing_asset_types: list[str] = Field(default_factory=list)
 
 
+class ChunkFileCheckPayload(BaseModel):
+    submission_id: int
+    asset_type: str
+    file_name: str
+    file_size: int
+    md5: str
+    total_chunks: int
+    chunk_size: int
+    mime_type: Optional[str] = None
+
+
+class ChunkUploadSessionInfo(BaseModel):
+    upload_id: str
+    asset_id: Optional[int] = None
+    submission_id: int
+    asset_type: str
+    file_name: str
+    mime_type: Optional[str] = None
+    file_md5: str = ""
+    total_size: int = 0
+    total_chunks: int = 0
+    chunk_size: int = 0
+    uploaded_parts: list[int] = Field(default_factory=list)
+    uploaded_count: int = 0
+    missing_parts: list[int] = Field(default_factory=list)
+    is_complete: bool = False
+    upload_status: str = "uploading"
+    error_message: Optional[str] = None
+
+
+class ChunkFileCheckResponse(BaseModel):
+    exists: bool = False
+    instant_upload: bool = False
+    chunk_size: int = 0
+    max_file_size: int = 0
+    session: Optional[ChunkUploadSessionInfo] = None
+    asset: Optional[SubmissionAssetInfo] = None
+    submission: Optional[SubmissionDetail] = None
+
+
+class ChunkUploadPartResponse(BaseModel):
+    message: str
+    session: ChunkUploadSessionInfo
+    submission: Optional[SubmissionDetail] = None
+
+
+class MergeChunksPayload(BaseModel):
+    upload_id: str
+    md5: str
+
+
+class MergeChunksResponse(BaseModel):
+    message: str
+    md5_verified: bool = True
+    asset: SubmissionAssetInfo
+    submission: SubmissionDetail
+
+
 class UpsertSubmissionPayload(BaseModel):
     student_name: Optional[str] = None
     group_name: Optional[str] = None
     project_name: Optional[str] = None
     statement_text: Optional[str] = None
     members: list[SubmissionMemberPayload] = Field(default_factory=list)
+
+
+class MyHomeworkStatus(BaseModel):
+    has_submission: bool = False
+    pending_resubmit_request: bool = False
+
+
+class CreateResubmitRequestPayload(BaseModel):
+    request_note: str = ""
 
 
 class FinalizeSubmissionResponse(BaseModel):

@@ -5,7 +5,7 @@
     <div class="request-shell">
       <section class="request-hero">
         <div>
-          <p class="hero-eyebrow">Approval Center</p>
+          <p class="hero-eyebrow">审核中心</p>
           <h2>管理员待审核申请中心</h2>
           <p class="hero-copy">
             集中审核申请书重传和签名变更请求，避免在用户列表里逐条弹窗处理。
@@ -40,6 +40,7 @@
             <select v-model="filters.type">
               <option value="all">全部</option>
               <option value="application_reupload">申请书重传</option>
+              <option value="homework_resubmit">作业重新提交</option>
               <option value="signature_update">签名变更</option>
             </select>
           </label>
@@ -183,7 +184,9 @@ function goUser(userId) {
 }
 
 function typeLabel(value) {
-  return value === 'signature_update' ? '签名变更' : '申请书重传';
+  if (value === 'signature_update') return '签名变更';
+  if (value === 'homework_resubmit') return '作业重新提交';
+  return '申请书重传';
 }
 
 function statusLabel(value) {
@@ -223,7 +226,7 @@ function openReviewModal(item, action) {
     visible: true,
     item,
     action,
-    reviewNote: action === 'approved' ? 'approved by admin' : 'rejected by admin',
+    reviewNote: action === 'approved' ? '管理员已批准' : '管理员已驳回',
     saving: false,
   };
 }

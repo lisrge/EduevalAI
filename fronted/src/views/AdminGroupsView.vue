@@ -5,7 +5,7 @@
     <div class="group-shell">
       <section class="group-hero">
         <div>
-          <p class="hero-eyebrow">Group Console</p>
+          <p class="hero-eyebrow">分组管理</p>
           <h2>分组与成员管理</h2>
           <p class="hero-copy">
             分组列表只展示组长与项目标题。点击“查看详情”后，再查看该组成员并对成员进行改组。

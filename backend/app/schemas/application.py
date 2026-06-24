@@ -81,6 +81,8 @@ class CreateUserRequestPayload(BaseModel):
 
 class UserChangeRequestItem(BaseModel):
     id: int
+    group_id: int | None = None
+    assignment_id: int | None = None
     request_type: str
     status: str
     request_note: str = ""

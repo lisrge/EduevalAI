@@ -239,16 +239,29 @@ export const useApplicationStore = defineStore('applications', () => {
     }
   }
 
-  async function refreshFromServer() {
+  async function refreshFromServer(options = {}) {
     if (listLoading.value) return;
+    const reloadDetail = options.reloadDetail !== false;
+    const syncSelection = options.syncSelection !== false;
     listLoading.value = true;
     try {
       const authStore = useAuthStore();
       const list = await fetchApplications(authStore.token);
       if (Array.isArray(list)) {
+        const serverIds = new Set();
+        const localIds = [];
         list.forEach((summary) => {
-          ensureServerItem(summary);
+          if (summary?.id) serverIds.add(summary.id);
+          const localId = ensureServerItem(summary);
+          if (localId) localIds.push(localId);
         });
+        items.value = items.value.filter(item => item.file || !item.applicationId || serverIds.has(item.applicationId));
+        if (syncSelection && (!selectedLocalId.value || !items.value.some(item => item.localId === selectedLocalId.value))) {
+          selectedLocalId.value = localIds[0] || items.value[0]?.localId || null;
+        }
+        if (reloadDetail && selectedLocalId.value) {
+          await loadDetail(selectedLocalId.value);
+        }
       }
     } finally {
       listLoading.value = false;

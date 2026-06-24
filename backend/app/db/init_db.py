@@ -1,4 +1,7 @@
+import random
+
 from sqlalchemy import inspect, text
+from sqlalchemy.orm import selectinload
 
 from app.db.base import Base, SessionLocal, engine
 from app.models.application import ApplicationRecord, ScoreResult
@@ -7,7 +10,9 @@ from app.models.code_analysis import SubmissionCodeAnalysis
 from app.models.course import Assignment, Course
 from app.models.document_draft import ApplicationDraft, TaskDraft
 from app.models.document_import import DocumentImportBatch, DocumentImportFile
+from app.models.gitee_profile import UserGiteeProfile
 from app.models.group import UserGroup
+from app.models.homework_file import HomeworkFile
 from app.models.request import UserChangeRequest
 from app.models.repository import RepoBinding, RepoCommitSnapshot
 from app.models.submission import AssignmentSubmission, SubmissionAsset, SubmissionMember
@@ -294,9 +299,20 @@ def init_db() -> None:
         if engine.dialect.name == "mysql" and blog_cols:
             for column_name in ("content_md", "content_text"):
                 if column_name in blog_cols:
-                    conn.exec_driver_sql(
-                        f"ALTER TABLE blog_posts MODIFY COLUMN {column_name} LONGTEXT NOT NULL"
-                    )
+                    try:
+                        # 先把 NULL 值设为空字符串
+                        conn.exec_driver_sql(
+                            f"UPDATE blog_posts SET {column_name} = '' WHERE {column_name} IS NULL"
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        # 再修改列类型
+                        conn.exec_driver_sql(
+                            f"ALTER TABLE blog_posts MODIFY COLUMN {column_name} LONGTEXT NOT NULL DEFAULT ''"
+                        )
+                    except Exception:
+                        pass
 
         try:
             import_file_cols = {c["name"] for c in inspector.get_columns("document_import_files")}
@@ -365,6 +381,154 @@ def init_db() -> None:
             except Exception:
                 pass
 
+        try:
+            submission_cols = {c["name"] for c in inspector.get_columns("assignment_submissions")}
+        except Exception:
+            submission_cols = set()
+
+        if submission_cols and "teacher_review_ai_json" not in submission_cols:
+            conn.exec_driver_sql("ALTER TABLE assignment_submissions ADD COLUMN teacher_review_ai_json TEXT NULL")
+            try:
+                conn.exec_driver_sql("UPDATE assignment_submissions SET teacher_review_ai_json='' WHERE teacher_review_ai_json IS NULL")
+            except Exception:
+                pass
+
+        if submission_cols and "group_id" not in submission_cols:
+            conn.exec_driver_sql("ALTER TABLE assignment_submissions ADD COLUMN group_id INTEGER NULL")
+            try:
+                conn.exec_driver_sql("CREATE INDEX ix_assignment_submissions_group_id ON assignment_submissions(group_id)")
+            except Exception:
+                pass
+            try:
+                conn.exec_driver_sql(
+                    "UPDATE assignment_submissions "
+                    "SET group_id = (SELECT users.group_id FROM users WHERE users.id = assignment_submissions.submitter_user_id) "
+                    "WHERE group_id IS NULL"
+                )
+            except Exception:
+                pass
+
+        try:
+            req_cols = {c["name"] for c in inspector.get_columns("user_change_requests")}
+        except Exception:
+            req_cols = set()
+        if req_cols and "group_id" not in req_cols:
+            conn.exec_driver_sql("ALTER TABLE user_change_requests ADD COLUMN group_id INTEGER NULL")
+            try:
+                conn.exec_driver_sql("CREATE INDEX ix_user_change_requests_group_id ON user_change_requests(group_id)")
+            except Exception:
+                pass
+        if req_cols and "assignment_id" not in req_cols:
+            conn.exec_driver_sql("ALTER TABLE user_change_requests ADD COLUMN assignment_id INTEGER NULL")
+            try:
+                conn.exec_driver_sql("CREATE INDEX ix_user_change_requests_assignment_id ON user_change_requests(assignment_id)")
+            except Exception:
+                pass
+
+        try:
+            submission_asset_cols = {c["name"] for c in inspector.get_columns("submission_assets")}
+        except Exception:
+            submission_asset_cols = set()
+        if engine.dialect.name == "mysql" and submission_asset_cols and "file_size" in submission_asset_cols:
+            try:
+                conn.exec_driver_sql("ALTER TABLE submission_assets MODIFY COLUMN file_size BIGINT NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+
+        try:
+            repo_binding_cols = {c["name"] for c in inspector.get_columns("repo_bindings")}
+        except Exception:
+            repo_binding_cols = set()
+
+        if repo_binding_cols and "analysis_summary_json" not in repo_binding_cols:
+            conn.exec_driver_sql("ALTER TABLE repo_bindings ADD COLUMN analysis_summary_json TEXT NULL")
+        if repo_binding_cols and "analysis_generated_at" not in repo_binding_cols:
+            conn.exec_driver_sql("ALTER TABLE repo_bindings ADD COLUMN analysis_generated_at DATETIME NULL")
+
+        try:
+            homework_indexes = {idx["name"] for idx in inspector.get_indexes("homework_files")}
+        except Exception:
+            homework_indexes = set()
+        try:
+            homework_cols = {c["name"] for c in inspector.get_columns("homework_files")}
+        except Exception:
+            homework_cols = set()
+        if engine.dialect.name == "mysql" and homework_cols and "file_size" in homework_cols:
+            try:
+                conn.exec_driver_sql("ALTER TABLE homework_files MODIFY COLUMN file_size BIGINT NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+        if "ux_homework_files_md5" not in homework_indexes:
+            try:
+                conn.exec_driver_sql("CREATE UNIQUE INDEX ux_homework_files_md5 ON homework_files(md5)")
+            except Exception:
+                pass
+
+        try:
+            teacher_score_cols = {c["name"] for c in inspector.get_columns("teacher_score_records")}
+        except Exception:
+            teacher_score_cols = set()
+
+        if teacher_score_cols and "project_display_score" not in teacher_score_cols:
+            conn.exec_driver_sql("ALTER TABLE teacher_score_records ADD COLUMN project_display_score INTEGER NOT NULL DEFAULT 0")
+            try:
+                conn.exec_driver_sql("UPDATE teacher_score_records SET project_display_score = COALESCE(completeness_score, 0)")
+            except Exception:
+                pass
+        if teacher_score_cols and "project_innovation_score" not in teacher_score_cols:
+            conn.exec_driver_sql("ALTER TABLE teacher_score_records ADD COLUMN project_innovation_score INTEGER NOT NULL DEFAULT 0")
+            try:
+                conn.exec_driver_sql("UPDATE teacher_score_records SET project_innovation_score = COALESCE(innovation_score, 0)")
+            except Exception:
+                pass
+        if teacher_score_cols and "key_highlight_score" not in teacher_score_cols:
+            conn.exec_driver_sql("ALTER TABLE teacher_score_records ADD COLUMN key_highlight_score INTEGER NOT NULL DEFAULT 0")
+            try:
+                conn.exec_driver_sql("UPDATE teacher_score_records SET key_highlight_score = COALESCE(code_quality_score, 0)")
+            except Exception:
+                pass
+        if teacher_score_cols and "group_total_score" not in teacher_score_cols:
+            conn.exec_driver_sql("ALTER TABLE teacher_score_records ADD COLUMN group_total_score FLOAT NOT NULL DEFAULT 0")
+            try:
+                conn.exec_driver_sql(
+                    "UPDATE teacher_score_records SET group_total_score = "
+                    "(COALESCE(project_display_score, COALESCE(completeness_score, 0)) * 0.5) + "
+                    "(COALESCE(project_innovation_score, COALESCE(innovation_score, 0)) * 0.3) + "
+                    "(COALESCE(key_highlight_score, COALESCE(code_quality_score, 0)) * 0.2)"
+                )
+            except Exception:
+                pass
+        if teacher_score_cols and "member_scores_json" not in teacher_score_cols:
+            conn.exec_driver_sql("ALTER TABLE teacher_score_records ADD COLUMN member_scores_json TEXT NULL")
+            try:
+                conn.exec_driver_sql("UPDATE teacher_score_records SET member_scores_json='[]' WHERE member_scores_json IS NULL")
+            except Exception:
+                pass
+
+        if engine.dialect.name == "mysql" and teacher_score_cols:
+            try:
+                conn.exec_driver_sql("ALTER TABLE teacher_score_records MODIFY COLUMN total_score DOUBLE NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            try:
+                conn.exec_driver_sql("ALTER TABLE teacher_score_records MODIFY COLUMN group_total_score DOUBLE NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            for legacy_col in [
+                "innovation_score",
+                "completeness_score",
+                "code_quality_score",
+                "demo_score",
+                "contribution_score",
+            ]:
+                if legacy_col in teacher_score_cols:
+                    try:
+                        conn.exec_driver_sql(
+                            f"ALTER TABLE teacher_score_records MODIFY COLUMN {legacy_col} INTEGER NOT NULL DEFAULT 0"
+                        )
+                    except Exception:
+                        pass
+
     db = SessionLocal()
     try:
         existing = db.query(Assignment).filter(Assignment.title == "2026项目实训末期检查").first()
@@ -399,6 +563,69 @@ def init_db() -> None:
             )
             db.add(assignment)
             db.commit()
+
+        group_two = db.query(UserGroup).filter(UserGroup.group_number == 2).first()
+        if group_two:
+            users = (
+                db.query(User)
+                .filter(User.group_id == group_two.id)
+                .order_by(User.id.asc())
+                .all()
+            )
+            if users:
+                existing_profiles = {
+                    item.user_id: item
+                    for item in db.query(UserGiteeProfile)
+                    .filter(UserGiteeProfile.user_id.in_([user.id for user in users]))
+                    .all()
+                }
+                submission = (
+                    db.query(AssignmentSubmission)
+                    .options(
+                        selectinload(AssignmentSubmission.members),
+                        selectinload(AssignmentSubmission.repo_binding).selectinload(RepoBinding.commits),
+                    )
+                    .filter(AssignmentSubmission.group_name == group_two.name)
+                    .order_by(AssignmentSubmission.updated_at.desc(), AssignmentSubmission.id.desc())
+                    .first()
+                )
+                author_names: list[str] = []
+                if submission and submission.repo_binding:
+                    author_names = sorted(
+                        {
+                            str(commit.author_name or "").strip()
+                            for commit in list(submission.repo_binding.commits or [])
+                            if str(commit.author_name or "").strip()
+                        }
+                    )
+                rng = random.Random(20260623)
+                rng.shuffle(author_names)
+                fallback_names = [f"group2_dev_{index + 1:02d}" for index in range(len(users))]
+                member_map = {
+                    str(member.student_id or "").strip(): member
+                    for member in list(getattr(submission, "members", []) or [])
+                }
+                changed = False
+                for index, user in enumerate(users):
+                    nickname = author_names[index] if index < len(author_names) else fallback_names[index]
+                    profile = existing_profiles.get(user.id)
+                    if not profile:
+                        profile = UserGiteeProfile(
+                            user_id=user.id,
+                            student_id=user.student_id,
+                            gitee_login=nickname,
+                            gitee_display_name=nickname,
+                            gitee_profile_url=f"https://gitee.com/{nickname}",
+                            notes="系统初始化时为第二组生成的测试映射",
+                        )
+                        db.add(profile)
+                        changed = True
+                    member = member_map.get(str(user.student_id or "").strip())
+                    if member and not str(member.git_author_names or "").strip():
+                        member.git_author_names = nickname
+                        changed = True
+                if changed:
+                    db.commit()
     finally:
         db.close()
 

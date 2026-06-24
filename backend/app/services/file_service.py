@@ -157,8 +157,10 @@ def create_chunk_upload_session(
     submission_id: int,
     asset_type: str,
     uploader_user_id: int,
+    asset_id: int,
     file_name: str,
     mime_type: str | None,
+    file_md5: str,
     total_size: int,
     total_chunks: int,
     chunk_size: int,
@@ -172,11 +174,14 @@ def create_chunk_upload_session(
         "submission_id": int(submission_id),
         "asset_type": asset_type,
         "uploader_user_id": int(uploader_user_id),
+        "asset_id": int(asset_id),
         "file_name": _safe_name(file_name, asset_type),
         "mime_type": mime_type,
+        "file_md5": str(file_md5 or "").strip().lower(),
         "total_size": int(total_size),
         "total_chunks": int(total_chunks),
         "chunk_size": int(chunk_size),
+        "status": "uploading",
         "created_at": datetime.utcnow().isoformat(),
         "updated_at": datetime.utcnow().isoformat(),
     }
@@ -250,6 +255,7 @@ def save_chunk_upload_part(upload_id: str, part_number: int, data: bytes) -> dic
         raise ValueError("empty chunk")
     target = _part_path(upload_id, part_number)
     target.write_bytes(data)
+    payload["status"] = "uploading"
     _touch_manifest(upload_id, payload)
     uploaded = _uploaded_parts(upload_id)
     return {
@@ -281,7 +287,7 @@ def finalize_chunk_upload(upload_id: str, version_no: int) -> dict:
     target_path = submission_dir / f"v{version_no}_{file_id}{suffix}"
 
     file_size = 0
-    digest = hashlib.sha256()
+    digest = hashlib.md5()
     with open(target_path, "wb") as target:
         for idx in range(1, total_chunks + 1):
             chunk = _part_path(upload_id, idx).read_bytes()
@@ -297,12 +303,23 @@ def finalize_chunk_upload(upload_id: str, version_no: int) -> dict:
             pass
         raise ValueError("merged file size mismatch")
 
+    expected_md5 = str(payload.get("file_md5") or "").strip().lower()
+    actual_md5 = digest.hexdigest().lower()
+    if expected_md5 and actual_md5 != expected_md5:
+        try:
+            target_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        payload["status"] = "failed"
+        _touch_manifest(upload_id, payload)
+        raise ValueError("merged file md5 mismatch")
+
     clear_chunk_upload_session(upload_id)
     return {
         "file_name": safe_name,
         "file_path": str(target_path),
         "file_size": file_size,
-        "file_hash": digest.hexdigest(),
+        "file_hash": actual_md5,
         "mime_type": payload.get("mime_type"),
     }
 
@@ -320,6 +337,19 @@ def clear_chunk_upload_session(upload_id: str) -> None:
         folder.rmdir()
     except OSError:
         return
+
+
+def mark_chunk_upload_failed(upload_id: str, error_message: str | None = None) -> dict:
+    payload = _read_manifest(upload_id)
+    payload["status"] = "failed"
+    if error_message:
+        payload["error_message"] = str(error_message).strip()[:500]
+    _touch_manifest(upload_id, payload)
+    uploaded = _uploaded_parts(upload_id)
+    payload["uploaded_parts"] = uploaded
+    payload["uploaded_count"] = len(uploaded)
+    payload["is_complete"] = len(uploaded) == int(payload.get("total_chunks") or 0)
+    return payload
 
 
 def remove_stored_file(path: str | os.PathLike[str]) -> None:

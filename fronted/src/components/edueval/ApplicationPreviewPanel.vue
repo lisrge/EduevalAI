@@ -7,38 +7,39 @@
       </div>
       <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
         <span v-if="fileName" class="badge neutral">{{ fileName }}</span>
-        <a
-          v-if="absolutePreviewUrl"
+        <button
+          v-if="previewObjectUrl"
           class="ghost-button"
-          :href="absolutePreviewUrlWithTheme || absolutePreviewUrl"
-          target="_blank"
-          rel="noopener noreferrer"
+          type="button"
+          @click="openPreviewInNewWindow"
         >
           新窗口打开
-        </a>
-        <a
-          v-else-if="absoluteDownloadUrl"
+        </button>
+        <button
+          v-if="downloadAvailable"
           class="ghost-button"
-          :href="absoluteDownloadUrl"
-          target="_blank"
-          rel="noopener noreferrer"
+          type="button"
+          :disabled="loading"
+          @click="downloadOriginalFile"
         >
           下载原文件
-        </a>
+        </button>
       </div>
     </div>
 
     <div class="edueval-panel-body">
       <div v-if="!enabled" class="empty-state">点击“预览申请书”后将在此处显示预览。</div>
       <div v-else-if="!item" class="empty-state">请先从申请书列表中选择一份申请书。</div>
-      <div v-else-if="absolutePreviewUrl" style="height: 720px; min-height: 520px; resize: vertical; overflow: hidden;">
+      <div v-else-if="loading" class="empty-state">正在加载预览...</div>
+      <div v-else-if="loadError" class="empty-state">{{ loadError }}</div>
+      <div v-else-if="previewObjectUrl" style="height: 720px; min-height: 520px; resize: vertical; overflow: hidden;">
         <iframe
-          :src="absolutePreviewUrlWithTheme || absolutePreviewUrl"
+          :src="previewObjectUrl"
           title="application preview"
           style="width: 100%; height: 100%; border: 1px solid var(--border); border-radius: 16px; background: var(--surface);"
         />
       </div>
-      <div v-else-if="absoluteDownloadUrl" class="empty-state">
+      <div v-else-if="downloadAvailable" class="empty-state">
         当前文件类型暂不支持在线预览，请使用“下载原文件”查看。
       </div>
       <div v-else class="empty-state">
@@ -49,9 +50,9 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
-import { getServerBase } from '../../services/eduevalApi';
-import { useThemeStore } from '../../stores/themeStore';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { fetchApplicationFileBlob, fetchApplicationPreviewBlob } from '../../services/eduevalApi';
+import { useAuthStore } from '../../stores/authStore';
 
 const props = defineProps({
   enabled: {
@@ -64,16 +65,17 @@ const props = defineProps({
   },
 });
 
-const themeStore = useThemeStore();
+const authStore = useAuthStore();
+const previewObjectUrl = ref('');
+const downloadObjectUrl = ref('');
+const loading = ref(false);
+const loadError = ref('');
 
 const fileName = computed(() => props.item?.fileName || '');
-
-function toAbsoluteUrl(path) {
-  if (!path) return '';
-  const raw = String(path);
-  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-  return `${getServerBase()}${raw.startsWith('/') ? '' : '/'}${raw}`;
-}
+const applicationId = computed(() => {
+  const application = props.item?.detail?.application || props.item?.application || null;
+  return application?.id || props.item?.applicationId || null;
+});
 
 const previewPath = computed(() => {
   const application = props.item?.detail?.application || props.item?.application || null;
@@ -85,19 +87,70 @@ const downloadPath = computed(() => {
   return application?.file_download_url || '';
 });
 
-const absolutePreviewUrl = computed(() => toAbsoluteUrl(previewPath.value));
-const absoluteDownloadUrl = computed(() => toAbsoluteUrl(downloadPath.value));
+const downloadAvailable = computed(() => Boolean(downloadPath.value && downloadObjectUrl.value));
 
-const absolutePreviewUrlWithTheme = computed(() => {
-  const raw = absolutePreviewUrl.value;
-  if (!raw) return '';
-  try {
-    const url = new URL(raw);
-    url.searchParams.set('theme', themeStore.isDark ? 'dark' : 'light');
-    return url.toString();
-  } catch (e) {
-    const sep = raw.includes('?') ? '&' : '?';
-    return `${raw}${sep}theme=${themeStore.isDark ? 'dark' : 'light'}`;
+function revokeObjectUrl(value) {
+  if (value) {
+    try {
+      URL.revokeObjectURL(value);
+    } catch (e) {
+      // Ignore object URL cleanup failures.
+    }
   }
+}
+
+function resetResources() {
+  revokeObjectUrl(previewObjectUrl.value);
+  revokeObjectUrl(downloadObjectUrl.value);
+  previewObjectUrl.value = '';
+  downloadObjectUrl.value = '';
+}
+
+async function loadPreviewResources() {
+  resetResources();
+  loadError.value = '';
+  if (!props.enabled || !applicationId.value) return;
+  loading.value = true;
+  try {
+    if (previewPath.value) {
+      const blob = await fetchApplicationPreviewBlob(authStore.token, applicationId.value);
+      previewObjectUrl.value = URL.createObjectURL(blob);
+    }
+    if (downloadPath.value) {
+      const blob = await fetchApplicationFileBlob(authStore.token, applicationId.value);
+      downloadObjectUrl.value = URL.createObjectURL(blob);
+    }
+  } catch (error) {
+    loadError.value = error?.message || '加载申请书失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+function openPreviewInNewWindow() {
+  if (!previewObjectUrl.value) return;
+  window.open(previewObjectUrl.value, '_blank', 'noopener,noreferrer');
+}
+
+function downloadOriginalFile() {
+  if (!downloadObjectUrl.value) return;
+  const link = document.createElement('a');
+  link.href = downloadObjectUrl.value;
+  link.download = fileName.value || 'application';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+watch(
+  () => [props.enabled, applicationId.value, previewPath.value, downloadPath.value],
+  () => {
+    loadPreviewResources();
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  resetResources();
 });
 </script>

@@ -5,7 +5,7 @@
     <div class="repo-overview-shell">
       <section class="repo-hero">
         <div>
-          <p class="hero-eyebrow">Gitee Overview</p>
+          <p class="hero-eyebrow">Gitee 仓库总览</p>
           <h2>Gitee 仓库总览</h2>
           <p class="hero-copy">
             按组查看仓库同步状态，并展示组内每个成员的提交次数、代码增删量、文件变更量和活跃周次。
@@ -64,20 +64,20 @@
             <span>同步状态</span>
             <select v-model="filters.syncStatus">
               <option value="all">全部</option>
-              <option value="synced">synced</option>
-              <option value="failed">failed</option>
-              <option value="never_bound">never_bound</option>
-              <option value="never_synced">never_synced</option>
-              <option value="group_repo_only">group_repo_only</option>
+              <option value="synced">已同步</option>
+              <option value="failed">同步失败</option>
+              <option value="never_bound">未绑定仓库</option>
+              <option value="never_synced">未同步</option>
+              <option value="group_repo_only">仅填写了组仓库</option>
             </select>
           </label>
           <label class="field">
             <span>贡献来源</span>
             <select v-model="filters.contributionSource">
               <option value="all">全部</option>
-              <option value="git">git</option>
-              <option value="mixed">mixed</option>
-              <option value="non_git">non_git</option>
+              <option value="git">仅 Git</option>
+              <option value="mixed">Git + 非 Git</option>
+              <option value="non_git">非 Git</option>
             </select>
           </label>
           <label class="field keyword-field">
@@ -101,7 +101,7 @@
         <div class="edueval-panel-body">
           <div v-if="!summary.risk_flags?.length" class="empty-state" style="padding: 0;">当前没有聚合风险标记。</div>
           <div v-else class="tag-row">
-            <span v-for="flag in summary.risk_flags" :key="flag" class="badge warn">{{ flag }}</span>
+            <span v-for="flag in summary.risk_flags" :key="flag" class="badge warn">{{ translateRiskFlag(flag) }}</span>
           </div>
         </div>
       </section>
@@ -137,7 +137,7 @@
                 <td>
                   <div class="strong-line">{{ item.student_name || item.display_name || '-' }}</div>
                   <div class="muted-line">{{ item.student_id || '-' }}</div>
-                  <div class="muted-line">{{ item.project_role || '-' }} / {{ item.contribution_source || 'mixed' }}</div>
+                  <div class="muted-line">{{ item.project_role || '-' }} / {{ translateContributionSource(item.contribution_source) }}</div>
                 </td>
                 <td>
                   <div class="strong-line">{{ item.project_name || '-' }}</div>
@@ -156,7 +156,7 @@
                   <span v-else class="muted-line">未绑定</span>
                 </td>
                 <td>
-                  <div class="strong-line">{{ item.sync_status }}</div>
+                  <div class="strong-line">{{ translateRepoSyncStatus(item.sync_status) }}</div>
                   <div class="muted-line">{{ formatTime(item.last_sync_at) }}</div>
                 </td>
                 <td>{{ item.matched_commit_count }}</td>
@@ -193,6 +193,7 @@ import {
   runSelectedRepoBindings,
 } from '../services/eduevalApi';
 import { useAuthStore } from '../stores/authStore';
+import { translateContributionSource, translateRepoSyncStatus, translateRiskFlag } from '../utils/statusText';
 
 const authStore = useAuthStore();
 const router = useRouter();

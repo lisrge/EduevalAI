@@ -9,6 +9,7 @@ class UserPublic(BaseModel):
     real_name: str = ""
     role: str
     is_root_admin: bool = False
+    group_id: int | None = None
     application_reupload_allowed: bool = False
     created_at: datetime
 

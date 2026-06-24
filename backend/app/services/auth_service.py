@@ -16,6 +16,9 @@ from app.core.config import get_settings
 from app.models.user import User, UserSession
 
 STUDENT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]{1,50}$")
+DEFAULT_SIGNATURE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/er8x+AAAAAASUVORK5CYII="
+DEFAULT_SIGNATURE_BYTES = base64.b64decode(DEFAULT_SIGNATURE_BASE64)
+DEFAULT_SIGNATURE_SHA256 = hashlib.sha256(DEFAULT_SIGNATURE_BYTES).hexdigest()
 
 
 def validate_student_id(student_id: str) -> str:
@@ -44,6 +47,59 @@ def verify_password(password: str, salt_hex: str, expected_hash: str) -> bool:
     return hmac.compare_digest(actual, expected_hash)
 
 
+def _signature_storage_dir() -> Path:
+    settings = get_settings()
+    signature_dir = settings.storage_path / "signatures"
+    signature_dir.mkdir(parents=True, exist_ok=True)
+    return signature_dir
+
+
+def user_has_real_signature(user: User) -> bool:
+    path_value = str(getattr(user, "signature_path", "") or "").strip()
+    if not path_value:
+        return False
+    path = Path(path_value)
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception:
+        return False
+    return digest != DEFAULT_SIGNATURE_SHA256
+
+
+async def save_signature_for_user(db: Session, user: User, signature: UploadFile) -> User:
+    content_type = (signature.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="signature must be an image")
+
+    original_name = signature.filename or "signature"
+    safe_name = os.path.basename(original_name)
+    suffix = Path(safe_name).suffix.lower()
+    target_path = _signature_storage_dir() / f"{uuid4().hex}{suffix or '.png'}"
+
+    data = await signature.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="signature file is empty")
+    target_path.write_bytes(data)
+
+    old_path_value = str(getattr(user, "signature_path", "") or "").strip()
+    user.signature_file_name = safe_name
+    user.signature_path = str(target_path)
+    db.commit()
+    db.refresh(user)
+
+    old_path = Path(old_path_value) if old_path_value else None
+    if old_path and old_path.exists() and old_path.is_file():
+        try:
+            old_digest = hashlib.sha256(old_path.read_bytes()).hexdigest()
+            if old_digest == DEFAULT_SIGNATURE_SHA256 and old_path != target_path:
+                old_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return user
+
+
 async def create_user(db: Session, student_id: str, real_name: str, password: str, signature: UploadFile) -> User:
     student_id = validate_student_id(student_id)
     real_name = (real_name or "").strip()
@@ -60,15 +116,10 @@ async def create_user(db: Session, student_id: str, real_name: str, password: st
     if existing:
         raise HTTPException(status_code=409, detail="student_id already exists")
 
-    settings = get_settings()
-    signature_dir = settings.storage_path / "signatures"
-    signature_dir.mkdir(parents=True, exist_ok=True)
-
     original_name = signature.filename or "signature"
     safe_name = os.path.basename(original_name)
-    file_id = uuid4().hex
     suffix = Path(safe_name).suffix.lower()
-    target_path = signature_dir / f"{file_id}{suffix or '.png'}"
+    target_path = _signature_storage_dir() / f"{uuid4().hex}{suffix or '.png'}"
 
     data = await signature.read()
     if not data:
@@ -113,17 +164,6 @@ def create_user_basic(db: Session, student_id: str, real_name: str, password: st
     if existing:
         raise HTTPException(status_code=409, detail="student_id already exists")
 
-    settings = get_settings()
-    signature_dir = settings.storage_path / "signatures"
-    signature_dir.mkdir(parents=True, exist_ok=True)
-
-    png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/er8x+AAAAAASUVORK5CYII="
-    data = base64.b64decode(png_base64)
-
-    file_id = uuid4().hex
-    target_path = signature_dir / f"{file_id}.png"
-    target_path.write_bytes(data)
-
     salt = os.urandom(16).hex()
     pwd_hash = _hash_password(password, salt)
 
@@ -134,8 +174,8 @@ def create_user_basic(db: Session, student_id: str, real_name: str, password: st
         password_hash=pwd_hash,
         role="user",
         is_root_admin=False,
-        signature_file_name="signature.png",
-        signature_path=str(target_path),
+        signature_file_name="",
+        signature_path="",
         created_at=datetime.utcnow(),
     )
     db.add(user)

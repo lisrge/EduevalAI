@@ -128,7 +128,9 @@ async function loadPage() {
     submission.value = detail || null;
     assignmentState.value = state || null;
     teachers.value = (Array.isArray(users) ? users : []).filter(item => ['teacher', 'admin'].includes(String(item.role || '').toLowerCase()));
-    selectedTeacherIds.value = (state?.assigned_teachers || []).map(item => item.teacher_user_id);
+    selectedTeacherIds.value = (state?.assigned_teachers || [])
+      .map(item => Number(item.teacher_user_id || 0))
+      .filter(value => value > 0);
   } catch (error) {
     errorMessage.value = error?.message || '加载失败';
   } finally {
@@ -141,8 +143,16 @@ async function saveAssignments() {
   errorMessage.value = '';
   try {
     const submissionId = Number(route.params.submissionId || 0);
-    const payload = await updateTeacherAssignments(authStore.token, submissionId, selectedTeacherIds.value);
+    const normalizedTeacherIds = Array.from(new Set(
+      (Array.isArray(selectedTeacherIds.value) ? selectedTeacherIds.value : [])
+        .map(item => Number(item || 0))
+        .filter(value => value > 0),
+    ));
+    const payload = await updateTeacherAssignments(authStore.token, submissionId, normalizedTeacherIds);
     assignmentState.value = payload || assignmentState.value;
+    selectedTeacherIds.value = (payload?.assigned_teachers || [])
+      .map(item => Number(item.teacher_user_id || 0))
+      .filter(value => value > 0);
   } catch (error) {
     errorMessage.value = error?.message || '保存失败';
   } finally {

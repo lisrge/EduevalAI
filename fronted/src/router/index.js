@@ -59,6 +59,18 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresStudent: true },
     },
     {
+      path: '/submission-assets/:submissionId/:assetId/preview',
+      name: 'submission-asset-preview',
+      component: () => import('../views/HomeworkAssetPreviewView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/homework/submissions/:submissionId/assets/:assetId/preview',
+      name: 'homework-asset-preview',
+      component: () => import('../views/HomeworkAssetPreviewView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/homework/history/:type',
       name: 'homework-history',
       component: () => import('../views/HomeworkHistoryView.vue'),
@@ -143,9 +155,21 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresAdmin: true },
     },
     {
+      path: '/admin/users/:userId/gitee',
+      name: 'admin-user-gitee-insight',
+      component: () => import('../views/AdminUserGiteeInsightView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
       path: '/teacher/reviews',
       name: 'teacher-reviews',
       component: () => import('../views/TeacherScoringMobileView.vue'),
+      meta: { requiresAuth: true, requiresStaff: true },
+    },
+    {
+      path: '/teacher/reviews/:submissionId/members/:studentId/blogs',
+      name: 'teacher-member-blogs',
+      component: () => import('../views/TeacherMemberBlogsView.vue'),
       meta: { requiresAuth: true, requiresStaff: true },
     },
     {

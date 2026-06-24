@@ -33,7 +33,7 @@ from app.schemas.application import (
     UploadResponse,
     UserChangeRequestItem,
 )
-from app.services.auth_service import get_user_by_token
+from app.services.auth_service import get_user_by_token, user_has_real_signature
 from app.services.file_service import save_upload_file, save_user_file
 from app.services.preview_service import PreviewError, get_preview_file
 from app.services.scoring_service import score_application_text
@@ -100,6 +100,8 @@ def _build_score_info(score: ScoreResult | None) -> ScoreInfo | None:
 def _build_request_item(row: UserChangeRequest) -> UserChangeRequestItem:
     return UserChangeRequestItem(
         id=row.id,
+        group_id=getattr(row, "group_id", None),
+        assignment_id=getattr(row, "assignment_id", None),
         request_type=row.request_type,
         status=row.status,
         request_note=row.request_note or "",
@@ -165,11 +167,32 @@ def _is_admin(user: User) -> bool:
 def _can_access_record(user: User, record: ApplicationRecord) -> bool:
     if _is_admin(user):
         return True
+    if record.group_id and user.group_id and int(record.group_id) == int(user.group_id):
+        return True
     if record.uploader_user_id and record.uploader_user_id == user.id:
         return True
     if record.student_id and record.student_id == user.student_id:
         return True
     return False
+
+
+def _pending_group_request_exists(db: Session, group_id: int | None, request_type: str) -> bool:
+    try:
+        gid = int(group_id or 0)
+    except Exception:
+        gid = 0
+    if gid <= 0:
+        return False
+    return (
+        db.query(UserChangeRequest)
+        .filter(
+            UserChangeRequest.group_id == gid,
+            UserChangeRequest.request_type == request_type,
+            UserChangeRequest.status == "pending",
+        )
+        .first()
+        is not None
+    )
 
 
 def _pending_request_exists(db: Session, user_id: int, request_type: str) -> bool:
@@ -301,14 +324,24 @@ def list_applications(
     user = _current_user(authorization, db)
     query = db.query(ApplicationRecord)
     if not _is_admin(user):
-        query = query.filter(
-            or_(
-                ApplicationRecord.uploader_user_id == user.id,
-                ApplicationRecord.student_id == user.student_id,
+        if user.group_id:
+            query = query.filter(ApplicationRecord.group_id == user.group_id)
+        else:
+            query = query.filter(
+                or_(
+                    ApplicationRecord.uploader_user_id == user.id,
+                    ApplicationRecord.student_id == user.student_id,
+                )
             )
-        )
     records = query.order_by(ApplicationRecord.updated_at.desc()).all()
     _attach_group_names(db, records)
+    if _is_admin(user):
+        uploader_ids = {r.uploader_user_id for r in records if r.uploader_user_id}
+        if uploader_ids:
+            uploader_map = {u.id: (u.real_name or u.student_id) for u in db.query(User).filter(User.id.in_(uploader_ids)).all()}
+            for r in records:
+                if r.uploader_user_id and str(r.student_name or "").strip() in {"", "unknown"}:
+                    r.student_name = uploader_map.get(r.uploader_user_id, r.student_name)
     items = [_to_summary(r) for r in records]
     if _is_admin(user):
         return items
@@ -393,26 +426,35 @@ async def upload_application(
     user = _current_user(authorization, db)
     if not _is_admin(user):
         student_id = user.student_id
-    has_existing = (
-        db.query(ApplicationRecord)
-        .filter(
-            or_(
-                ApplicationRecord.uploader_user_id == user.id,
-                ApplicationRecord.student_id == user.student_id,
-            )
+    effective_name = (student_name or "").strip() or (user.real_name or user.student_id)
+    if user.group_id:
+        existed = (
+            db.query(ApplicationRecord)
+            .filter(ApplicationRecord.group_id == user.group_id)
+            .first()
         )
-        .first()
-        is not None
-    )
-    if has_existing and not user.application_reupload_allowed:
-        raise HTTPException(status_code=403, detail="application already uploaded; request admin approval before reupload")
+        if existed:
+            raise HTTPException(status_code=409, detail="本组已上传过申请书。如需重新上传，请先提交申请。")
+    else:
+        existed = (
+            db.query(ApplicationRecord)
+            .filter(
+                or_(
+                    ApplicationRecord.uploader_user_id == user.id,
+                    ApplicationRecord.student_id == user.student_id,
+                )
+            )
+            .first()
+        )
+        if existed:
+            raise HTTPException(status_code=409, detail="你已经上传过申请书。如需重新上传，请先提交申请。")
     if not student_id:
         student_id = user.student_id
     record = await _create_application_record(
         file,
         db,
         uploader_user_id=user.id,
-        student_name=student_name,
+        student_name=effective_name,
         student_id=student_id,
         project_title=project_title,
     )
@@ -422,11 +464,8 @@ async def upload_application(
     if user.group_id:
         group = db.query(UserGroup).filter(UserGroup.id == user.group_id).first()
         record._group_name = group.name if group else ""
-    if user.application_reupload_allowed:
-        user.application_reupload_allowed = False
-        db.commit()
     return UploadResponse(
-        message="Application uploaded successfully",
+        message="申请书上传成功",
         application=_build_application_info(record),
         extraction=_build_extraction_info(record),
     )
@@ -525,21 +564,26 @@ def my_application_status(
     db: Session = Depends(get_db),
 ):
     user = _current_user(authorization, db)
-    has_application = (
-        db.query(ApplicationRecord)
-        .filter(
-            or_(
-                ApplicationRecord.uploader_user_id == user.id,
-                ApplicationRecord.student_id == user.student_id,
+    if user.group_id:
+        has_application = db.query(ApplicationRecord).filter(ApplicationRecord.group_id == user.group_id).first() is not None
+        pending = _pending_group_request_exists(db, user.group_id, "application_reupload")
+    else:
+        has_application = (
+            db.query(ApplicationRecord)
+            .filter(
+                or_(
+                    ApplicationRecord.uploader_user_id == user.id,
+                    ApplicationRecord.student_id == user.student_id,
+                )
             )
+            .first()
+            is not None
         )
-        .first()
-        is not None
-    )
+        pending = _pending_request_exists(db, user.id, "application_reupload")
     return MyApplicationStatus(
         has_application=has_application,
-        application_reupload_allowed=bool(user.application_reupload_allowed),
-        pending_reupload_request=_pending_request_exists(db, user.id, "application_reupload"),
+        application_reupload_allowed=not has_application,
+        pending_reupload_request=pending,
         pending_signature_request=_pending_request_exists(db, user.id, "signature_update"),
     )
 
@@ -566,25 +610,31 @@ def create_reupload_request(
     db: Session = Depends(get_db),
 ):
     user = _current_user(authorization, db)
-    has_application = (
-        db.query(ApplicationRecord)
-        .filter(
-            or_(
-                ApplicationRecord.uploader_user_id == user.id,
-                ApplicationRecord.student_id == user.student_id,
+    if user.group_id:
+        has_application = db.query(ApplicationRecord).filter(ApplicationRecord.group_id == user.group_id).first() is not None
+    else:
+        has_application = (
+            db.query(ApplicationRecord)
+            .filter(
+                or_(
+                    ApplicationRecord.uploader_user_id == user.id,
+                    ApplicationRecord.student_id == user.student_id,
+                )
             )
+            .first()
+            is not None
         )
-        .first()
-        is not None
-    )
     if not has_application:
-        raise HTTPException(status_code=400, detail="no application uploaded yet")
-    if user.application_reupload_allowed:
-        raise HTTPException(status_code=400, detail="reupload already approved")
-    if _pending_request_exists(db, user.id, "application_reupload"):
-        raise HTTPException(status_code=409, detail="reupload request already pending")
+        raise HTTPException(status_code=400, detail="你尚未上传申请书，无法申请重新上传。")
+    if user.group_id:
+        if _pending_group_request_exists(db, user.group_id, "application_reupload"):
+            raise HTTPException(status_code=409, detail="本组已经提交过重新上传申请，请等待管理员审核。")
+    else:
+        if _pending_request_exists(db, user.id, "application_reupload"):
+            raise HTTPException(status_code=409, detail="你已经提交过重新上传申请，请等待管理员审核。")
     row = UserChangeRequest(
         user_id=user.id,
+        group_id=user.group_id,
         request_type="application_reupload",
         status="pending",
         request_note=(payload.request_note or "").strip(),
@@ -603,6 +653,8 @@ async def create_signature_request(
     db: Session = Depends(get_db),
 ):
     user = _current_user(authorization, db)
+    if not user_has_real_signature(user):
+        raise HTTPException(status_code=409, detail="no signature on file; please upload your first signature directly")
     if _pending_request_exists(db, user.id, "signature_update"):
         raise HTTPException(status_code=409, detail="signature request already pending")
     content_type = (signature.content_type or "").lower()

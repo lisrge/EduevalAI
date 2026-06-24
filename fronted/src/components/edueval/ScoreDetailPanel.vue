@@ -4,7 +4,7 @@
       <div>
         <h2>{{ allowScoring ? '评分详情' : '申请书详情' }}</h2>
         <p class="panel-subtitle">
-          {{ allowScoring ? '管理员可查看评分与复核信息' : '学生仅可查看自己的申请书基础信息与处理状态' }}
+          {{ allowScoring ? '管理员可查看评分与复核信息' : '学生可查看本组申请书基础信息与处理状态' }}
         </p>
       </div>
       <button
@@ -37,6 +37,10 @@
             <div class="full-width">
               <dt>项目名称</dt>
               <dd>{{ (item.application?.project_title || item.detail?.application?.project_title) ?? '-' }}</dd>
+            </div>
+            <div v-if="!allowScoring">
+              <dt>小组</dt>
+              <dd>{{ (item.application?.group_name || item.detail?.application?.group_name) ?? '-' }}</dd>
             </div>
             <div class="full-width">
               <dt>文件名</dt>

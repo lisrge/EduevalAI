@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.base import get_db
 from app.models.course import Assignment
+from app.models.gitee_profile import UserGiteeProfile
 from app.models.group import UserGroup
 from app.models.repository import RepoBinding, RepoCommitSnapshot
 from app.models.submission import AssignmentSubmission, SubmissionMember
 from app.models.user import User
 from app.schemas.repository import (
+    AdminUserRepoInsightResponse,
     RepoAutoSyncPayload,
     RepoAutoSyncSchedulerStatus,
     RepoBatchSyncItem,
@@ -28,12 +32,19 @@ from app.schemas.repository import (
     RepoWeeklyStat,
 )
 from app.services.auth_service import get_user_by_token
-from app.services.repo_scheduler_service import get_scheduler_status, run_due_repo_syncs
+from app.services.repo_scheduler_service import (
+    enqueue_repo_preload,
+    get_repo_preload_state,
+    get_scheduler_status,
+    run_due_repo_syncs,
+)
 from app.services.repository_service import (
     build_member_contribution_summary,
     build_member_commit_histories,
     build_weekly_stats,
+    load_cached_repo_insight_snapshot,
     parse_gitee_repo_url,
+    repo_insight_needs_refresh,
     sync_gitee_repo,
     upsert_repo_binding,
 )
@@ -142,6 +153,120 @@ def _ensure_submission_access(user: User, submission: AssignmentSubmission) -> N
         raise HTTPException(status_code=403, detail="forbidden")
 
 
+def _admin_user_repo_insight_payload(db: Session, user: User, refresh: bool = False) -> AdminUserRepoInsightResponse:
+    group = db.query(UserGroup).filter(UserGroup.id == user.group_id).first() if user.group_id else None
+    if not group:
+        return AdminUserRepoInsightResponse(
+            user_id=user.id,
+            student_id=user.student_id,
+            real_name=user.real_name or "",
+            group_id=None,
+            group_number=None,
+            group_name="",
+            project_name="",
+            repo_url="",
+            binding_id=None,
+            sync_status="no_group",
+            analysis_state="missing",
+            analysis_stale=False,
+            analysis_message="",
+            code_summary={},
+            members=[],
+            risk_flags=["user_without_group"],
+        )
+
+    binding = None
+    submission = None
+    if str(group.repo_url or "").strip():
+        binding = _ensure_group_submission_binding(db, group)
+        submission = (
+            db.query(AssignmentSubmission)
+            .options(
+                selectinload(AssignmentSubmission.members),
+                selectinload(AssignmentSubmission.repo_binding).selectinload(RepoBinding.commits),
+            )
+            .filter(AssignmentSubmission.id == binding.submission_id)
+            .first()
+            if binding
+            else None
+        )
+        if submission and submission.repo_binding:
+            binding = submission.repo_binding
+    analysis_payload = None
+    analysis_state = "missing"
+    analysis_stale = False
+    analysis_message = ""
+    if binding:
+        analysis_payload = load_cached_repo_insight_snapshot(binding)
+        analysis_stale = repo_insight_needs_refresh(binding, analysis_payload)
+        if refresh or analysis_stale:
+            enqueue_repo_preload(binding.id, force=bool(refresh))
+        preload_state = get_repo_preload_state(binding.id)
+        if analysis_payload:
+            analysis_state = preload_state if preload_state != "idle" else "ready"
+        else:
+            analysis_state = preload_state if preload_state != "idle" else "missing"
+        if refresh:
+            analysis_message = "已提交后台刷新任务，页面会自动更新。"
+        elif not analysis_payload and binding:
+            analysis_message = "仓库分析正在后台预加载，请稍后查看。"
+        elif analysis_stale:
+            analysis_message = "当前先展示最近一次缓存结果，后台正在刷新最新仓库分析。"
+
+    if not analysis_payload:
+        analysis_payload = {
+            "binding_id": binding.id if binding else None,
+            "repo_url": str(group.repo_url or ""),
+            "sync_status": str(binding.sync_status if binding else "never_bound"),
+            "last_sync_at": binding.last_sync_at.isoformat() if binding and binding.last_sync_at else None,
+            "analysis_generated_at": None,
+            "code_summary": {},
+            "members": [
+                {
+                    "user_id": item.id,
+                    "member_id": None,
+                    "student_id": item.student_id,
+                    "real_name": item.real_name or item.student_id,
+                    "gitee_login": "",
+                    "gitee_display_name": "",
+                    "contribution_source": "mixed",
+                    "commit_count": 0,
+                    "additions": 0,
+                    "deletions": 0,
+                    "changed_files": 0,
+                    "workload_value": 0,
+                    "workload_percent": 0.0,
+                }
+                for item in db.query(User).filter(User.group_id == group.id).order_by(User.id.asc()).all()
+            ],
+            "risk_flags": ["analysis_pending" if binding else "no_repo_bound"],
+        }
+    return AdminUserRepoInsightResponse(
+        user_id=user.id,
+        student_id=user.student_id,
+        real_name=user.real_name or "",
+        group_id=group.id,
+        group_number=group.group_number,
+        group_name=group.name or "",
+        project_name=(submission.project_name if submission else group.description) or "",
+        repo_url=str(group.repo_url or ""),
+        binding_id=analysis_payload.get("binding_id"),
+        sync_status=str(analysis_payload.get("sync_status") or "never_bound"),
+        last_sync_at=datetime.fromisoformat(analysis_payload["last_sync_at"]) if analysis_payload.get("last_sync_at") else None,
+        analysis_generated_at=(
+            datetime.fromisoformat(analysis_payload["analysis_generated_at"])
+            if analysis_payload.get("analysis_generated_at")
+            else None
+        ),
+        analysis_state=analysis_state,
+        analysis_stale=bool(analysis_stale),
+        analysis_message=analysis_message,
+        code_summary=analysis_payload.get("code_summary") or {},
+        members=analysis_payload.get("members") or [],
+        risk_flags=analysis_payload.get("risk_flags") or [],
+    )
+
+
 def _binding_info(binding: RepoBinding) -> RepoBindingInfo:
     return RepoBindingInfo(
         id=binding.id,
@@ -187,6 +312,7 @@ def upsert_submission_repo_binding(
     submission = _load_submission(db, submission_id)
     _ensure_submission_access(user, submission)
     binding = upsert_repo_binding(db, submission_id, payload.repo_url, payload.default_branch)
+    enqueue_repo_preload(binding.id, force=True)
     return _binding_info(binding)
 
 
@@ -221,6 +347,7 @@ def sync_repo_binding_now(
     if not binding:
         raise HTTPException(status_code=404, detail="repo binding not found")
     _ensure_submission_access(user, binding.submission)
+    enqueue_repo_preload(binding.id, force=True)
     inserted = sync_gitee_repo(db, binding)
     return RepoSyncResponse(message="repo sync completed", binding=_binding_info(binding), commit_count=inserted)
 
@@ -534,6 +661,7 @@ def update_repo_member_mappings(
     db.refresh(submission)
     if not submission.repo_binding:
         return RepoContributionSummary(members=[], unmapped_authors=[], non_git_members=[], risk_flags=[])
+    enqueue_repo_preload(submission.repo_binding.id, force=True)
     summary = build_member_contribution_summary(submission.repo_binding)
     return RepoContributionSummary(
         members=summary["members"],
@@ -686,3 +814,19 @@ def admin_repo_member_progress(
         risk_flags=sorted(risk_flags),
         items=items,
     )
+
+
+@router.get("/admin/users/{user_id}/repo-insight", response_model=AdminUserRepoInsightResponse)
+def admin_user_repo_insight(
+    user_id: int,
+    refresh: bool = False,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    if not _is_admin(user):
+        raise HTTPException(status_code=403, detail="admin required")
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="user not found")
+    return _admin_user_repo_insight_payload(db, target, refresh=refresh)

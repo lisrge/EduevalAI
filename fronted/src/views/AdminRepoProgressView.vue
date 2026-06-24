@@ -54,7 +54,7 @@
         </div>
 
         <div v-if="binding" class="panel-subtitle">
-          当前状态：{{ binding.sync_status }}，最近手动/常规同步：{{ formatDate(binding.last_sync_at) }}，最近自动同步：{{ formatDate(binding.last_auto_sync_at) }}
+          当前状态：{{ translateRepoSyncStatus(binding.sync_status) }}，最近手动/常规同步：{{ formatDate(binding.last_sync_at) }}，最近自动同步：{{ formatDate(binding.last_auto_sync_at) }}
           <span v-if="binding.last_error">，错误：{{ binding.last_error }}</span>
         </div>
         <div v-if="schedulerStatus?.last_result" class="panel-subtitle">
@@ -81,9 +81,9 @@
             <label>
               <div class="panel-subtitle">贡献来源</div>
               <select v-model="member.contribution_source" class="edueval-input">
-                <option value="git">git</option>
-                <option value="mixed">mixed</option>
-                <option value="non_git">non_git</option>
+                <option value="git">仅 Git</option>
+                <option value="mixed">Git + 非 Git</option>
+                <option value="non_git">非 Git</option>
               </select>
             </label>
             <label>
@@ -97,7 +97,7 @@
           </div>
 
           <div class="panel-subtitle">
-            匹配结果：{{ member.matched_commit_count }} commits，+{{ member.matched_additions }} / -{{ member.matched_deletions }}，涉及 {{ member.matched_changed_files }} 个文件
+            匹配结果：{{ member.matched_commit_count }} 次提交，+{{ member.matched_additions }} / -{{ member.matched_deletions }}，涉及 {{ member.matched_changed_files }} 个文件
           </div>
           <div class="panel-subtitle">
             活跃周次：{{ member.matched_weeks?.join(', ') || '暂无' }}
@@ -134,14 +134,14 @@
             </div>
             <p class="weekly-summary">{{ item.work_summary }}</p>
             <div class="weekly-metrics">
-              <span>{{ item.commit_count }} commits</span>
+              <span>{{ item.commit_count }} 次提交</span>
               <span>+{{ item.additions }} / -{{ item.deletions }}</span>
               <span>{{ item.changed_files }} 个文件</span>
             </div>
             <div v-for="member in item.members" :key="`${item.week_label}-${member.student_name}`" class="member-progress-row">
               <strong>{{ member.student_name }}</strong>
               <span>{{ member.work_summary }}</span>
-              <small>{{ member.commit_count }} commits，+{{ member.additions }} / -{{ member.deletions }}</small>
+              <small>{{ member.commit_count }} 次提交，+{{ member.additions }} / -{{ member.deletions }}</small>
             </div>
             <div v-if="item.unmapped_authors.length" class="panel-subtitle">未映射作者：{{ item.unmapped_authors.join(', ') }}</div>
             <div v-if="item.risk_flags.length" class="panel-subtitle">风险：{{ item.risk_flags.join(', ') }}</div>
@@ -173,7 +173,7 @@
         <div v-if="visibleMemberCommits.length === 0" class="panel-subtitle">当前筛选下没有提交。</div>
         <div v-for="item in visibleMemberCommits" :key="`member-${item.id}`" class="commit-detail-card">
           <div class="commit-detail-heading">
-            <strong>{{ item.author_name || 'Unknown' }}</strong>
+            <strong>{{ item.author_name || '未知作者' }}</strong>
             <span>{{ formatDate(item.committed_at) }}</span>
           </div>
           <div>{{ item.message || '-' }}</div>
@@ -187,7 +187,7 @@
         <div v-if="commits.length === 0" class="panel-subtitle">当前没有提交快照。</div>
         <div v-for="item in commits" :key="item.id" class="panel" style="padding: 12px; display: grid; gap: 6px;">
           <div style="display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
-            <strong>{{ item.author_name || 'Unknown' }}</strong>
+            <strong>{{ item.author_name || '未知作者' }}</strong>
             <span class="panel-subtitle">{{ formatDate(item.committed_at) }}</span>
           </div>
           <div class="panel-subtitle">{{ item.commit_hash }}</div>
@@ -217,6 +217,7 @@ import {
   upsertSubmissionRepoBinding,
 } from '../services/eduevalApi';
 import { useAuthStore } from '../stores/authStore';
+import { translateRepoSyncStatus } from '../utils/statusText';
 
 const authStore = useAuthStore();
 const route = useRoute();

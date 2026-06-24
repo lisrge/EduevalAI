@@ -1,122 +1,110 @@
 <template>
-  <!-- 顶部导航栏：边框改为更明确但依然极浅的灰色 #e2e8f0 -->
-  <header class="h-24 flex items-center justify-between px-12 bg-[#f0f4f9] shrink-0 relative z-10 border-b border-[#f1f5f9] shadow-sm pt-6 pb-2">
-    <!-- 左侧：项目 Logo 与 名称 -->
-    <div class="flex items-center" style="gap: 24px;">
-      <img src="../assets/EduevalAI_logo.png" style="margin-left: 24px;" alt="Logo" class="logo-image rounded-2xl object-contain shadow-sm" />
-      <div class="flex items-center" style="gap: 16px;">
-        <h1 class="font-kavo text-3xl text-text-primary tracking-normal">EduevalAI</h1>
-        <!-- BETA 标签：紫色渐变或纯色 -->
-        <span class="px-3 py-1 text-[9px] bg-purple-100 text-purple-600 rounded-full font-black uppercase tracking-widest shadow-sm inline-flex items-center justify-center">Beta</span>
-      </div>
-    </div>
-
-    <!-- 右侧：功能按钮 -->
-    <div class="flex items-center" style="gap: 40px; margin-right: 24px;">
-      <div class="flex items-center" style="gap: 16px;">
-        <button class="p-3 text-text-secondary bg-white hover:text-primary rounded-xl shadow-sm hover:shadow-md transition-all duration-300 border-none active:scale-95" title="切换主题" @click="themeStore.toggle">
-          <Moon v-if="themeStore.isDark" :size="20" />
-          <Sun v-else :size="20" />
-        </button>
-        <button class="p-3 text-text-secondary bg-white hover:text-red-500 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 border-none active:scale-95" title="清空对话">
-          <Trash2 :size="20" />
-        </button>
-      </div>
-
-      <!-- 用户资料区域：优化布局并强制锁定头像尺寸 -->
-      <div
-        ref="userMenuRef"
-        class="flex items-center group cursor-pointer bg-white/80 rounded-full shadow-sm hover:shadow-md transition-all duration-300 relative"
-        style="padding: 4px 12px; gap: 8px;"
-        @click="toggleMenu"
-      >
-        <div class="flex flex-col items-end hidden md:flex">
-          <span class="text-[11px] font-black text-text-primary leading-none">{{ displayName }}</span>
-          <span class="text-[9px] text-text-tertiary mt-0.5 font-bold uppercase tracking-tighter">{{ displayRole }}</span>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <div class="brand-block">
+        <img src="../assets/EduevalAI_logo.png" alt="Logo" class="logo-image" />
+        <div>
+          <div class="brand-row">
+            <h1 class="brand-title brand-name">EduevalAI</h1>
+            <span class="badge badge-warning">Beta</span>
+          </div>
+          <p class="brand-subtitle">课程过程材料、博客抓取、教师评分一体化工作台</p>
         </div>
-        <!-- 用户头像：强制使用 inline style 锁定极小尺寸 (32px) -->
-        <div 
-          class="rounded-full border border-gray-100 overflow-hidden shadow-sm shrink-0" 
-          style="width: 32px !important; height: 32px !important; min-width: 32px !important; min-height: 32px !important;"
-        >
-          <img src="https://ui-avatars.com/api/?name=User&background=2563eb&color=fff" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover;" />
+    </div>
+    <!-- 右侧：功能按钮 -->
+      <div class="header-actions">
+        <div v-if="false" class="header-icon-actions">
+          <button type="button" class="header-icon-button" title="切换主题" @click="themeStore.toggle">
+            <Moon v-if="themeStore.isDark" :size="18" />
+            <Sun v-else :size="18" />
+          </button>
+          <button type="button" class="header-icon-button" title="功能预留">
+            <Trash2 :size="18" />
+          </button>
         </div>
 
         <div
-          v-if="menuOpen && authStore.user"
-          style="position: absolute; top: calc(100% + 10px); right: 0; min-width: 220px; z-index: 50; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16); overflow: hidden;"
-          @click.stop
+          ref="userMenuRef"
+          class="user-menu-trigger"
+          :class="{ 'is-open': menuOpen }"
+          @click="toggleMenu"
         >
-          <button
-            v-if="!authStore.isTeacher"
-            type="button"
-            class="ghost-button"
-            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
-            @click="goWorkbench"
+          <div class="user-meta">
+            <span class="user-name">{{ displayName }}</span>
+            <span class="user-role">{{ displayRole }}</span>
+          </div>
+          <div class="avatar-shell">
+            <img :src="avatarUrl" alt="Avatar" class="avatar-image" />
+          </div>
+
+          <div
+            v-if="menuOpen && authStore.user"
+            class="user-dropdown"
+            @click.stop
           >
-            工作台
-          </button>
-          <button
-            v-if="!authStore.isTeacher"
-            type="button"
-            class="ghost-button"
-            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
-            @click="goHomework"
-          >
-            交作业
-          </button>
-          <button
-            v-if="authStore.isTeacher"
-            type="button"
-            class="ghost-button"
-            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
-            @click="goTeacherReviews"
-          >
-            教师评分端
-          </button>
-          <button
-            type="button"
-            class="ghost-button"
-            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
-            @click="goProfile"
-          >
-            个人空间
-          </button>
-          <button
-            v-if="authStore.isAdmin"
-            type="button"
-            class="ghost-button"
-            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
-            @click="goAdmin"
-          >
-            后台管理
-          </button>
-          <button
-            v-if="authStore.isAdmin"
-            type="button"
-            class="ghost-button"
-            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
-            @click="goBlogQuality"
-          >
-            博客质量总览
-          </button>
-          <button
-            v-if="authStore.isAdmin"
-            type="button"
-            class="ghost-button"
-            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); background: transparent;"
-            @click="goRepoOverview"
-          >
-            Gitee总览
-          </button>
-          <button
-            type="button"
-            class="ghost-button"
-            style="width: 100%; border-radius: 0; justify-content: flex-start; border: 0; background: transparent;"
-            @click="doLogout"
-          >
-            退出登录
-          </button>
+            <button
+              v-if="!authStore.isTeacher"
+              type="button"
+              class="dropdown-item"
+              @click="goWorkbench"
+            >
+              工作台
+            </button>
+            <button
+              v-if="!authStore.isTeacher"
+              type="button"
+              class="dropdown-item"
+              @click="goHomework"
+            >
+              交作业
+            </button>
+            <button
+              v-if="authStore.isTeacher"
+              type="button"
+              class="dropdown-item"
+              @click="goTeacherReviews"
+            >
+              教师评分端
+            </button>
+            <button
+              type="button"
+              class="dropdown-item"
+              @click="goProfile"
+            >
+              个人空间
+            </button>
+            <button
+              v-if="authStore.isAdmin"
+              type="button"
+              class="dropdown-item"
+              @click="goAdmin"
+            >
+              后台管理
+            </button>
+            <button
+              v-if="authStore.isAdmin"
+              type="button"
+              class="dropdown-item"
+              @click="goBlogQuality"
+            >
+              博客质量总览
+            </button>
+            <button
+              v-if="authStore.isAdmin"
+              type="button"
+              class="dropdown-item"
+              @click="goRepoOverview"
+            >
+              Gitee总览
+            </button>
+            <button
+              type="button"
+              class="dropdown-item danger"
+              @click="doLogout"
+            >
+              退出登录
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -136,10 +124,14 @@ const router = useRouter();
 
 const displayName = computed(() => authStore.user?.student_id || '未登录');
 const displayRole = computed(() => {
-  if (!authStore.user) return 'Guest';
-  if (authStore.isAdmin) return 'Admin';
-  if (authStore.isTeacher) return 'Teacher';
-  return 'Student';
+  if (!authStore.user) return '游客';
+  if (authStore.isAdmin) return '管理员';
+  if (authStore.isTeacher) return '教师';
+  return '学生';
+});
+const avatarUrl = computed(() => {
+  const name = encodeURIComponent(String(displayName.value || 'User'));
+  return `https://ui-avatars.com/api/?name=${name}&background=3d63dd&color=fff`;
 });
 
 const menuOpen = ref(false);
@@ -212,11 +204,220 @@ async function doLogout() {
 </script>
 
 <style scoped>
-/* 显式定义 Logo 尺寸 */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  padding: 18px 0 0;
+  backdrop-filter: blur(12px);
+}
+
+.app-header__inner {
+  width: min(1320px, calc(100% - 40px));
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-sm);
+}
+
+:global([data-web-theme='dark']) .app-header__inner {
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
 .logo-image {
-  width: 48px !important;
-  height: 48px !important;
-  min-width: 36px;
-  min-height: 36px;
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  object-fit: contain;
+  box-shadow: 0 10px 24px rgba(61, 99, 221, 0.18);
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.brand-name {
+  font-size: 30px;
+}
+
+.brand-subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
+
+.header-icon-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.header-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: transform 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.header-icon-button:hover {
+  color: var(--primary);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.user-menu-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.user-menu-trigger.is-open {
+  border-color: var(--border-strong);
+}
+
+.user-meta {
+  display: grid;
+  justify-items: end;
+  min-width: 0;
+}
+
+.user-name {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.user-role {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.avatar-shell {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.user-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 240px;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.dropdown-item {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.dropdown-item:last-child {
+  border-bottom: 0;
+}
+
+.dropdown-item:hover {
+  background: var(--surface-soft);
+  color: var(--primary);
+}
+
+.dropdown-item.danger:hover {
+  color: var(--danger);
+}
+
+@media (max-width: 1024px) {
+  .app-header__inner {
+    width: min(100%, calc(100% - 24px));
+  }
+}
+
+@media (max-width: 720px) {
+  .app-header {
+    padding-top: 12px;
+  }
+
+  .app-header__inner {
+    width: min(100%, calc(100% - 16px));
+    padding: 12px 14px;
+  }
+
+  .brand-name {
+    font-size: 24px;
+  }
+
+  .brand-subtitle {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .user-menu-trigger {
+    margin-left: auto;
+  }
 }
 </style>

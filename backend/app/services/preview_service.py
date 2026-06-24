@@ -165,4 +165,9 @@ def get_preview_file(file_path: str) -> PreviewResult:
         html_path = _docx_to_html(src, out_dir)
         return PreviewResult(path=str(html_path), media_type="text/html; charset=utf-8")
 
+    if suffix in {"doc", "xls", "xlsx", "ppt", "pptx", "pps", "ppsx"}:
+        out_dir = settings.preview_storage_path
+        pdf_path = _run_soffice_convert(src, out_dir)
+        return PreviewResult(path=str(pdf_path), media_type="application/pdf")
+
     raise PreviewError("unsupported preview type")

@@ -1,11 +1,12 @@
 <template>
-  <div class="edueval-skin flex flex-col" style="min-height: 100vh;">
+  <div class="edueval-skin edueval-page">
     <ChatHeader />
 
-    <div style="padding: 20px; display: flex; justify-content: center;">
-      <section class="panel" style="width: 820px; max-width: 100%;">
+    <div class="page-wrapper" style="display: grid; justify-content: center;">
+      <section class="panel" style="width: min(880px, 100%);">
         <div class="panel-header">
           <div>
+            <p class="hero-eyebrow" style="margin-bottom: 6px;">Profile</p>
             <h2>个人空间</h2>
             <p class="panel-subtitle">查看学号、电子签名、密码与申请状态。</p>
           </div>
@@ -36,38 +37,39 @@
               </div>
               <div>
                 <dt>签名变更申请</dt>
-                <dd>{{ profile?.pending_signature_request ? '审核中' : '无' }}</dd>
+                <dd>{{ profile?.has_signature ? (profile?.pending_signature_request ? '审核中' : '无') : '当前无签名' }}</dd>
               </div>
               <div class="full-width">
                 <dt>电子签名</dt>
                 <dd>
-                  <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-                    <span class="badge neutral">{{ profile?.signature_file_name || '-' }}</span>
+                  <div class="page-actions">
+                    <span class="badge neutral">{{ profile?.has_signature ? (profile?.signature_file_name || '-') : '未上传' }}</span>
                     <a v-if="signatureUrl" class="ghost-button" :href="signatureUrl" target="_blank" rel="noopener noreferrer">查看原图</a>
                   </div>
                 </dd>
               </div>
             </dl>
             <div v-if="signatureUrl" style="margin-top: 10px;">
-              <img :src="signatureUrl" alt="signature" style="max-width: 280px; width: 100%; border: 1px solid var(--border); border-radius: 16px; background: var(--surface);" />
+              <img :src="signatureUrl" alt="signature" class="image-preview-frame" style="max-width: 280px; width: 100%;" />
             </div>
+            <div v-else class="panel-subtitle" style="margin-top: 10px;">当前账号还没有电子签名。</div>
           </section>
 
           <section v-if="!authStore.isAdmin" class="detail-block">
-            <h3>申请修改电子签名</h3>
+            <h3>{{ profile?.has_signature ? '申请修改电子签名' : '上传电子签名' }}</h3>
             <div class="upload-form" style="grid-template-columns: 1fr;">
               <label class="field">
-                <span>新签名图片</span>
+                <span>{{ profile?.has_signature ? '新签名图片' : '签名图片' }}</span>
                 <input type="file" accept="image/*" @change="onSignatureChange" />
               </label>
-              <label class="field">
+              <label v-if="profile?.has_signature" class="field">
                 <span>申请说明</span>
                 <textarea v-model="signatureNote" rows="4" />
               </label>
             </div>
             <div class="form-actions" style="justify-content: flex-end; margin-top: 10px;">
-              <button class="primary-button" type="button" :disabled="savingSignature || !signatureFile" @click="submitSignatureRequest">
-                {{ savingSignature ? '提交中...' : '提交签名变更申请' }}
+              <button class="primary-button" type="button" :disabled="savingSignature || !signatureFile" @click="submitSignatureAction">
+                {{ savingSignature ? '提交中...' : (profile?.has_signature ? '提交签名变更申请' : '直接上传签名') }}
               </button>
             </div>
           </section>
@@ -100,7 +102,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import ChatHeader from '../components/ChatHeader.vue';
-import { changeUserPassword, fetchUserProfile, fetchUserSignature, requestSignatureUpdate } from '../services/eduevalApi';
+import { changeUserPassword, fetchUserProfile, fetchUserSignature, requestSignatureUpdate, uploadUserSignature } from '../services/eduevalApi';
 import { useAuthStore } from '../stores/authStore';
 
 const authStore = useAuthStore();
@@ -127,6 +129,12 @@ async function loadProfile() {
   localError.value = null;
   try {
     profile.value = await fetchUserProfile(authStore.token);
+    if (profile.value?.has_signature) {
+      await loadSignature();
+    } else if (signatureObjectUrl.value) {
+      URL.revokeObjectURL(signatureObjectUrl.value);
+      signatureObjectUrl.value = '';
+    }
   } catch (e) {
     localError.value = e?.message || '加载失败';
   }
@@ -170,20 +178,25 @@ async function submitPassword() {
   }
 }
 
-async function submitSignatureRequest() {
+async function submitSignatureAction() {
   if (!signatureFile.value) {
-    localError.value = '请选择新签名图片';
+    localError.value = profile.value?.has_signature ? '请选择新签名图片' : '请选择签名图片';
     return;
   }
   savingSignature.value = true;
   localError.value = null;
   try {
-    await requestSignatureUpdate(authStore.token, signatureFile.value, signatureNote.value);
+    if (profile.value?.has_signature) {
+      await requestSignatureUpdate(authStore.token, signatureFile.value, signatureNote.value);
+    } else {
+      profile.value = await uploadUserSignature(authStore.token, signatureFile.value);
+      await loadSignature();
+    }
     signatureFile.value = null;
     signatureNote.value = '';
     await loadProfile();
   } catch (e) {
-    localError.value = e?.message || '提交签名变更申请失败';
+    localError.value = e?.message || (profile.value?.has_signature ? '提交签名变更申请失败' : '上传签名失败');
   } finally {
     savingSignature.value = false;
   }
@@ -191,7 +204,6 @@ async function submitSignatureRequest() {
 
 onMounted(() => {
   loadProfile();
-  loadSignature();
 });
 
 onBeforeUnmount(() => {

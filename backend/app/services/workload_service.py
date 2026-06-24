@@ -267,7 +267,10 @@ def build_submission_workload_summary(submission: AssignmentSubmission) -> Submi
             WorkloadEvidenceItem(label="贡献来源", value=str(member.contribution_source or "mixed")),
             WorkloadEvidenceItem(label="申报占比", value=f"{declared or 0}%"),
             WorkloadEvidenceItem(label="角色", value=member.project_role or "未填写"),
-            WorkloadEvidenceItem(label="个人陈述", value="已填写" if (member.personal_statement or "").strip() else "未填写"),
+            WorkloadEvidenceItem(
+                label="个人陈述",
+                value=re.sub(r"\s+", " ", str(member.personal_statement or "")).strip() or "未填写",
+            ),
             WorkloadEvidenceItem(label="博客篇数", value=str(blog_post_count)),
             WorkloadEvidenceItem(label="博客工作项", value=str(blog_work_item_count)),
         ]
@@ -291,6 +294,7 @@ def build_submission_workload_summary(submission: AssignmentSubmission) -> Submi
                 student_name=member.student_name,
                 student_id=member.student_id,
                 project_role=member.project_role,
+                personal_statement=re.sub(r"\s+", " ", str(member.personal_statement or "")).strip(),
                 contribution_source=member.contribution_source or "mixed",
                 workload_index=workload_index,
                 rank_order=0,

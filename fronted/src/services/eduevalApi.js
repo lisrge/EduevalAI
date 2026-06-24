@@ -1,3 +1,5 @@
+import { translateApiMessage } from '../utils/statusText';
+
 const DEFAULT_API_BASE = (() => {
   try {
     const protocol = window.location.protocol || 'http:';
@@ -8,7 +10,7 @@ const DEFAULT_API_BASE = (() => {
   }
 })();
 
-function getApiBase() {
+export function getApiBase() {
   return process.env.VUE_APP_EDUEVAL_API_BASE || DEFAULT_API_BASE;
 }
 
@@ -68,12 +70,12 @@ async function fetchWithFallback(url, init) {
 
 async function parseResponse(response) {
   if (!response.ok) {
-    let message = 'Request failed';
+    let message = '请求失败';
     try {
       const payload = await response.json();
-      message = payload?.detail || payload?.message || message;
+      message = translateApiMessage(payload?.detail || payload?.message || message);
     } catch (error) {
-      message = response.statusText || message;
+      message = translateApiMessage(response.statusText || message);
     }
     throw new Error(message);
   }
@@ -82,12 +84,12 @@ async function parseResponse(response) {
 
 async function parseBlobResponse(response) {
   if (!response.ok) {
-    let message = 'Request failed';
+    let message = '请求失败';
     try {
       const payload = await response.json();
-      message = payload?.detail || payload?.message || message;
+      message = translateApiMessage(payload?.detail || payload?.message || message);
     } catch (error) {
-      message = response.statusText || message;
+      message = translateApiMessage(response.statusText || message);
     }
     throw new Error(message);
   }
@@ -96,12 +98,12 @@ async function parseBlobResponse(response) {
 
 async function parseTextResponse(response) {
   if (!response.ok) {
-    let message = 'Request failed';
+    let message = '请求失败';
     try {
       const payload = await response.json();
-      message = payload?.detail || payload?.message || message;
+      message = translateApiMessage(payload?.detail || payload?.message || message);
     } catch (error) {
-      message = response.statusText || message;
+      message = translateApiMessage(response.statusText || message);
     }
     throw new Error(message);
   }
@@ -161,11 +163,36 @@ export async function requestSignatureUpdate(token, signatureFile, requestNote =
   return parseResponse(response);
 }
 
+export async function uploadUserSignature(token, signatureFile) {
+  const formData = new FormData();
+  formData.append('signature', signatureFile);
+  const response = await fetchWithFallback(`${getApiBase()}/users/me/signature`, {
+    method: 'POST',
+    headers: withAuthHeader(token),
+    body: formData,
+  });
+  return parseResponse(response);
+}
+
 export async function fetchApplicationDetail(token, applicationId) {
   const response = await fetchWithFallback(`${getApiBase()}/applications/${applicationId}`, {
     headers: withAuthHeader(token),
   });
   return parseResponse(response);
+}
+
+export async function fetchApplicationFileBlob(token, applicationId) {
+  const response = await fetchWithFallback(`${getApiBase()}/applications/${applicationId}/file`, {
+    headers: withAuthHeader(token),
+  });
+  return parseBlobResponse(response);
+}
+
+export async function fetchApplicationPreviewBlob(token, applicationId) {
+  const response = await fetchWithFallback(`${getApiBase()}/applications/${applicationId}/preview`, {
+    headers: withAuthHeader(token),
+  });
+  return parseBlobResponse(response);
 }
 
 export async function uploadApplicationFile(token, file, meta = null) {
@@ -683,6 +710,25 @@ export async function fetchMyAssignmentSubmission(token, assignmentId) {
   return parseResponse(response);
 }
 
+export async function fetchMyHomeworkStatus(token, assignmentId) {
+  const response = await fetchWithFallback(`${getApiBase()}/assignments/${encodeURIComponent(String(assignmentId))}/submissions/me/status`, {
+    headers: withAuthHeader(token),
+  });
+  return parseResponse(response);
+}
+
+export async function requestHomeworkResubmit(token, assignmentId, payload) {
+  const response = await fetchWithFallback(`${getApiBase()}/assignments/${encodeURIComponent(String(assignmentId))}/submissions/me/resubmit-request`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...withAuthHeader(token),
+    },
+    body: JSON.stringify(payload || {}),
+  });
+  return parseResponse(response);
+}
+
 export async function upsertAssignmentSubmission(token, assignmentId, payload) {
   const response = await fetchWithFallback(`${getApiBase()}/assignments/${encodeURIComponent(String(assignmentId))}/submissions`, {
     method: 'POST',
@@ -703,6 +749,43 @@ export async function uploadSubmissionAsset(token, submissionId, assetType, file
     method: 'POST',
     headers: withAuthHeader(token),
     body: formData,
+  });
+  return parseResponse(response);
+}
+
+export async function checkChunkFile(token, payload) {
+  const response = await fetchWithFallback(`${getApiBase()}/check_file`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...withAuthHeader(token),
+    },
+    body: JSON.stringify(payload || {}),
+  });
+  return parseResponse(response);
+}
+
+export async function uploadChunkPart(token, { uploadId, partNumber, chunk }) {
+  const formData = new FormData();
+  formData.append('upload_id', String(uploadId || ''));
+  formData.append('part_number', String(partNumber || ''));
+  formData.append('chunk', chunk);
+  const response = await fetchWithFallback(`${getApiBase()}/upload_chunk`, {
+    method: 'POST',
+    headers: withAuthHeader(token),
+    body: formData,
+  });
+  return parseResponse(response);
+}
+
+export async function mergeChunkFile(token, payload) {
+  const response = await fetchWithFallback(`${getApiBase()}/merge_chunks`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...withAuthHeader(token),
+    },
+    body: JSON.stringify(payload || {}),
   });
   return parseResponse(response);
 }
@@ -728,6 +811,50 @@ export async function fetchSubmissionDetail(token, submissionId) {
     headers: withAuthHeader(token),
   });
   return parseResponse(response);
+}
+
+export async function fetchSubmissionAssetBlob(token, assetId) {
+  const response = await fetchWithFallback(`${getApiBase()}/assets/${encodeURIComponent(String(assetId))}/download`, {
+    headers: withAuthHeader(token),
+  });
+  if (!response.ok) {
+    let message = '请求失败';
+    try {
+      const payload = await response.json();
+      message = translateApiMessage(payload?.detail || payload?.message || message);
+    } catch (error) {
+      message = translateApiMessage(response.statusText || message);
+    }
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  return {
+    blob,
+    contentType: response.headers.get('content-type') || blob.type || '',
+    disposition: response.headers.get('content-disposition') || '',
+  };
+}
+
+export async function fetchSubmissionAssetPreviewBlob(token, assetId) {
+  const response = await fetchWithFallback(`${getApiBase()}/assets/${encodeURIComponent(String(assetId))}/preview`, {
+    headers: withAuthHeader(token),
+  });
+  if (!response.ok) {
+    let message = '请求失败';
+    try {
+      const payload = await response.json();
+      message = translateApiMessage(payload?.detail || payload?.message || message);
+    } catch (error) {
+      message = translateApiMessage(response.statusText || message);
+    }
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  return {
+    blob,
+    contentType: response.headers.get('content-type') || blob.type || '',
+    disposition: response.headers.get('content-disposition') || '',
+  };
 }
 
 export async function exportTeacherScores(token, { format = 'xlsx', assignmentId = null } = {}) {
@@ -867,6 +994,17 @@ export async function updateSubmissionRepoMemberMappings(token, submissionId, pa
   return parseResponse(response);
 }
 
+export async function fetchAdminUserRepoInsight(token, userId, { refresh = false } = {}) {
+  const qs = refresh ? '?refresh=true' : '';
+  const response = await fetchWithFallback(
+    `${getApiBase()}/admin/users/${encodeURIComponent(String(userId))}/repo-insight${qs}`,
+    {
+      headers: withAuthHeader(token),
+    },
+  );
+  return parseResponse(response);
+}
+
 export async function fetchSubmissionWorkloadSummary(token, submissionId) {
   const response = await fetchWithFallback(`${getApiBase()}/submissions/${encodeURIComponent(String(submissionId))}/workload`, {
     headers: withAuthHeader(token),
@@ -898,6 +1036,16 @@ export async function fetchTeacherSubmissionReview(token, submissionId) {
   const response = await fetchWithFallback(`${getApiBase()}/teacher/submissions/${encodeURIComponent(String(submissionId))}`, {
     headers: withAuthHeader(token),
   });
+  return parseResponse(response);
+}
+
+export async function fetchTeacherMemberBlogs(token, submissionId, studentId) {
+  const response = await fetchWithFallback(
+    `${getApiBase()}/teacher/submissions/${encodeURIComponent(String(submissionId))}/members/${encodeURIComponent(String(studentId))}/blogs`,
+    {
+      headers: withAuthHeader(token),
+    },
+  );
   return parseResponse(response);
 }
 

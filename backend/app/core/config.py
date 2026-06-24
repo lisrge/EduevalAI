@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,17 +17,27 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
 
     storage_root: str = "./storage"
+    submission_storage_root: str | None = None
     preview_converter_path: str = "soffice"
     model_provider: str = "openai-compatible"
     model_name: str = "deepseek-chat"
     model_base_url: str | None = None
     model_api_key: str | None = None
     upload_session_ttl_hours: int = 24
+    upload_chunk_size_mb: int = 5
+    upload_max_file_size_gb: int = 4
     repo_auto_sync_enabled: bool = True
     repo_auto_sync_poll_minutes: int = 15
     repo_auto_sync_weekday: int = 1
     repo_auto_sync_hour: int = 3
     repo_auto_sync_max_pages: int = 3
+    repo_preload_batch_size: int = 4
+    repo_startup_preload_batch_size: int = 200
+    repo_analysis_max_age_hours: int = 12
+    teacher_score_refresh_enabled: bool = True
+    teacher_score_refresh_poll_minutes: int = 120
+    teacher_score_refresh_max_age_hours: int = 6
+    teacher_score_refresh_batch_size: int = 10
     blog_crawler_enabled: bool = True
     blog_crawler_source: str = "csdn"
     blog_cdp_url: str = "http://127.0.0.1:9222"
@@ -43,6 +54,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ENV_FILE_PATH,
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
         protected_namespaces=("settings_",),
     )
@@ -73,11 +85,24 @@ class Settings(BaseSettings):
 
     @property
     def submission_storage_path(self) -> Path:
+        if self.submission_storage_root:
+            root = Path(self.submission_storage_root)
+            if not root.is_absolute():
+                root = self.backend_root / root
+            return root.resolve()
         return self.storage_path / "submissions"
 
     @property
     def upload_session_storage_path(self) -> Path:
         return self.storage_path / "upload_sessions"
+
+    @property
+    def upload_chunk_size_bytes(self) -> int:
+        return max(int(self.upload_chunk_size_mb or 5), 1) * 1024 * 1024
+
+    @property
+    def upload_max_file_size_bytes(self) -> int:
+        return max(int(self.upload_max_file_size_gb or 4), 1) * 1024 * 1024 * 1024
 
     @property
     def blog_storage_path(self) -> Path:
@@ -97,4 +122,7 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
+    for key in ("MODEL_BASE_URL", "MODEL_API_KEY", "MODEL_NAME", "MODEL_PROVIDER"):
+        if os.environ.get(key, None) == "":
+            os.environ.pop(key, None)
     return Settings()

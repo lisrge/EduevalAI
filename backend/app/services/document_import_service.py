@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
-import secrets
-import string
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -18,7 +17,7 @@ from app.models.blog import BlogSource
 from app.models.document_import import DocumentImportBatch, DocumentImportFile
 from app.models.group import UserGroup
 from app.models.user import User
-from app.services.auth_service import create_user_basic
+from app.services.auth_service import _hash_password, create_user_basic
 from app.services.text_extractor import extract_text
 
 URL_RE = re.compile(r"https?://[^\s|，。；;）)]+", re.I)
@@ -322,9 +321,51 @@ def merge_batch_groups(files: list[DocumentImportFile]) -> list[dict]:
     return list(groups.values())
 
 
-def _initial_password() -> str:
-    alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(14))
+def build_import_initial_password(student_id: str) -> str:
+    sid = str(student_id or "").strip()
+    return f"sdu{sid[-3:]}" if sid else "sdu000"
+
+
+def reset_password_for_user(user: User, password: str) -> None:
+    salt = os.urandom(16).hex()
+    user.password_salt = salt
+    user.password_hash = _hash_password(password, salt)
+
+
+def _student_ids_from_batch(batch: DocumentImportBatch) -> list[str]:
+    student_ids: list[str] = []
+    seen: set[str] = set()
+    for row in batch.files:
+        try:
+            payload = json.loads(row.parsed_json or "{}")
+        except Exception:
+            payload = {}
+        for member in payload.get("members") or []:
+            sid = _clean((member or {}).get("student_id"))
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            student_ids.append(sid)
+    return student_ids
+
+
+def reset_import_batch_user_passwords(db: Session, batch: DocumentImportBatch) -> list[dict]:
+    credentials: list[dict] = []
+    for sid in _student_ids_from_batch(batch):
+        user = db.query(User).filter(User.student_id == sid).first()
+        if user is None:
+            continue
+        password = build_import_initial_password(sid)
+        reset_password_for_user(user, password)
+        credentials.append(
+            {
+                "student_id": user.student_id,
+                "real_name": user.real_name,
+                "initial_password": password,
+            }
+        )
+    db.commit()
+    return credentials
 
 
 def commit_import_batch(db: Session, batch: DocumentImportBatch, groups_override: list[dict] | None = None) -> dict:
@@ -384,7 +425,7 @@ def commit_import_batch(db: Session, batch: DocumentImportBatch, groups_override
         for member in parsed["members"]:
             user = db.query(User).filter(User.student_id == member["student_id"]).first()
             if user is None:
-                password = _initial_password()
+                password = build_import_initial_password(member["student_id"])
                 user = create_user_basic(db, member["student_id"], member["name"] or member["student_id"], password)
                 credentials.append(
                     {"student_id": user.student_id, "real_name": user.real_name, "initial_password": password}

@@ -15,17 +15,24 @@ from app.models.user import User
 from app.schemas.teacher_score import (
     TeacherAssignmentPayload,
     TeacherAssignmentUpdateResponse,
+    TeacherMemberBlogListResponse,
     TeacherReviewQueueItem,
     TeacherScorePayload,
     TeacherScoreSaveResponse,
     TeacherSubmissionReview,
 )
 from app.services.auth_service import get_user_by_token
+from app.services.teacher_score_scheduler_service import enqueue_teacher_score_refresh
 from app.services.teacher_score_service import (
     build_teacher_assignment_response,
+    build_teacher_member_blog_list,
     build_teacher_review,
     build_teacher_queue_item,
+    build_teacher_member_aggregates,
     compute_total_score,
+    compute_group_total_score,
+    compute_personal_total_values,
+    serialize_member_scores_payload,
 )
 
 router = APIRouter(prefix="/teacher", tags=["teacher-scores"])
@@ -71,7 +78,7 @@ def _ensure_admin(user: User) -> None:
 def _is_assigned_teacher(submission: AssignmentSubmission, user_id: int) -> bool:
     assignments = list(submission.teacher_assignments or [])
     if not assignments:
-        return True
+        return False
     return any(int(item.teacher_user_id) == int(user_id) for item in assignments)
 
 
@@ -131,6 +138,11 @@ def list_teacher_review_submissions(
         .order_by(AssignmentSubmission.submitted_at.desc(), AssignmentSubmission.updated_at.desc())
         .filter(AssignmentSubmission.status == "submitted")
     )
+    if _is_teacher(user):
+        query = query.join(
+            TeacherReviewAssignment,
+            TeacherReviewAssignment.submission_id == AssignmentSubmission.id,
+        ).filter(TeacherReviewAssignment.teacher_user_id == user.id)
     if assignment_id:
         _ = db.query(Assignment).filter(Assignment.id == assignment_id).first()
         query = query.filter(AssignmentSubmission.assignment_id == assignment_id)
@@ -166,7 +178,26 @@ def get_teacher_submission_review(
     submission = _load_submission(db, submission_id)
     if _is_teacher(user) and not _is_assigned_teacher(submission, user.id):
         raise HTTPException(status_code=403, detail="submission not assigned to current teacher")
-    return build_teacher_review(submission, user, _to_submission_detail(db, submission))
+    enqueue_teacher_score_refresh(submission.id)
+    return build_teacher_review(db, submission, user, _to_submission_detail(db, submission))
+
+
+@router.get("/submissions/{submission_id}/members/{student_id}/blogs", response_model=TeacherMemberBlogListResponse)
+def get_teacher_member_blogs(
+    submission_id: int,
+    student_id: str,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    _ensure_teacher_access(user)
+    submission = _load_submission(db, submission_id)
+    if _is_teacher(user) and not _is_assigned_teacher(submission, user.id):
+        raise HTTPException(status_code=403, detail="submission not assigned to current teacher")
+    try:
+        return build_teacher_member_blog_list(db, submission, student_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="submission member not found") from None
 
 
 @router.post("/submissions/{submission_id}/score", response_model=TeacherScoreSaveResponse)
@@ -198,18 +229,29 @@ def save_teacher_submission_score(
         )
         db.add(record)
 
-    record.innovation_score = payload.innovation_score
-    record.completeness_score = payload.completeness_score
-    record.code_quality_score = payload.code_quality_score
-    record.demo_score = payload.demo_score
-    record.contribution_score = payload.contribution_score
+    record.project_display_score = payload.project_display_score
+    record.project_innovation_score = payload.project_innovation_score
+    record.key_highlight_score = payload.key_highlight_score
+    # Keep legacy columns synchronized so old schemas and exports remain writable.
+    record.completeness_score = payload.project_display_score
+    record.innovation_score = payload.project_innovation_score
+    record.code_quality_score = payload.key_highlight_score
+    record.group_total_score = compute_group_total_score(record)
+    record.member_scores_json = serialize_member_scores_payload(payload.member_scores, submission)
+    member_aggregates = build_teacher_member_aggregates([record], submission)
+    personal_average = round(
+        sum(float(item.average_personal_score or 0) for item in member_aggregates) / len(member_aggregates),
+        1,
+    ) if member_aggregates else 0
+    record.contribution_score = int(round(personal_average))
+    record.demo_score = 100
     record.comment = (payload.comment or "").strip() or None
-    record.total_score = compute_total_score(record)
+    record.total_score = compute_total_score(record, submission)
     record.updated_at = _utcnow()
     db.commit()
 
     refreshed = _load_submission(db, submission.id)
-    review = build_teacher_review(refreshed, user, _to_submission_detail(db, refreshed))
+    review = build_teacher_review(db, refreshed, user, _to_submission_detail(db, refreshed))
     return TeacherScoreSaveResponse(message="teacher score saved", review=review)
 
 
@@ -236,16 +278,35 @@ def update_submission_teacher_assignments(
     _ensure_admin(user)
     submission = _load_submission(db, submission_id)
 
-    teacher_user_ids = sorted({int(item) for item in payload.teacher_user_ids if int(item) > 0})
+    teacher_user_ids_set: set[int] = set()
+    for raw in list(payload.teacher_user_ids or []):
+        try:
+            value = int(raw)
+        except Exception:
+            continue
+        if value > 0:
+            teacher_user_ids_set.add(value)
+    teacher_user_ids = sorted(teacher_user_ids_set)
     if teacher_user_ids:
         teachers = db.query(User).filter(User.id.in_(teacher_user_ids)).all()
         teacher_map = {int(item.id): item for item in teachers if str(item.role or "").lower() in {"teacher", "admin"}}
         if len(teacher_map) != len(teacher_user_ids):
             raise HTTPException(status_code=400, detail="some teachers not found or role invalid")
-
-    submission.teacher_assignments.clear()
+    previous_teacher_ids = {
+        int(item.teacher_user_id)
+        for item in list(submission.teacher_assignments or [])
+        if getattr(item, "teacher_user_id", None)
+    }
+    removed_teacher_ids = sorted(previous_teacher_ids - set(teacher_user_ids))
+    db.query(TeacherReviewAssignment).filter(TeacherReviewAssignment.submission_id == submission.id).delete(synchronize_session=False)
+    if removed_teacher_ids:
+        db.query(TeacherScoreRecord).filter(
+            TeacherScoreRecord.submission_id == submission.id,
+            TeacherScoreRecord.teacher_user_id.in_(removed_teacher_ids),
+        ).delete(synchronize_session=False)
+    db.flush()
     for teacher_user_id in teacher_user_ids:
-        submission.teacher_assignments.append(TeacherReviewAssignment(teacher_user_id=teacher_user_id))
+        db.add(TeacherReviewAssignment(submission_id=submission.id, teacher_user_id=teacher_user_id))
 
     db.commit()
     refreshed = _load_submission(db, submission.id)

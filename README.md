@@ -12,20 +12,37 @@
 
 ### 1) 后端
 
-```bash
-cd backend
+如果你当前就在本 README 所在目录，也就是 `EduevalAI/` 目录下：
+
+```powershell
+cd .\backend
 python -m venv .venv
-.venv/Scripts/pip install -r requirements.txt   # Windows
-cp .env.example .env   # 编辑 .env 填写 MySQL 连接信息
-.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+.\.venv\Scripts\python -m pip install -r requirements.txt
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
+.\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
-启动后访问 `http://127.0.0.1:8001/api`，看到 `{"status":"running"}` 即成功。
+如果你当前在更外层目录，例如 `d:\ModelHub\EduevalAI`，则先进入项目目录再启动：
+
+```powershell
+cd .\EduevalAI\backend
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements.txt
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
+.\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+```
+
+说明：
+
+- `Copy-Item` 是 Windows PowerShell 的复制命令，原来的 `cp` 在部分环境下不可直接用。
+- 当前后端启动后，健康检查地址是 `http://127.0.0.1:8001/api/health`
+- 看到返回 `{"status":"ok"}` 即表示启动成功。
+- 如果 `.env` 中 MySQL 密码不正确，系统会打印数据库连接失败信息；当前项目代码仍会回退到本地 SQLite 继续启动，便于开发测试。
 
 ### 2) 前端
 
-```bash
-cd fronted
+```powershell
+cd .\fronted
 npm install
 npm run serve -- --port 8080
 ```

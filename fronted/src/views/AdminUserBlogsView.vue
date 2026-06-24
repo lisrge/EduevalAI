@@ -5,7 +5,7 @@
     <div class="blog-admin-shell">
       <section class="blog-hero">
         <div>
-          <p class="hero-eyebrow">Blog Evidence</p>
+          <p class="hero-eyebrow">博客取证</p>
           <h2>管理员博客取证台</h2>
           <p class="hero-copy">
             查看该用户的博客列表、抓取记录、正文预览、归档地址和人工审核状态。

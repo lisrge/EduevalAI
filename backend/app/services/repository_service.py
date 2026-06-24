@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+import json
+from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 from urllib.parse import urlparse
 
 from fastapi import HTTPException
@@ -10,8 +15,11 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.models.gitee_profile import UserGiteeProfile
 from app.models.repository import RepoBinding, RepoCommitSnapshot
 from app.models.submission import AssignmentSubmission
+from app.models.user import User
+from app.services.code_analysis_service import TEXT_EXTENSIONS, _is_ignored, _safe_decode, analyze_code_archive
 from app.services.csdn_crawler_service import (
     PLAYWRIGHT_AVAILABLE,
     is_port_open,
@@ -20,6 +28,16 @@ from app.services.csdn_crawler_service import (
 )
 
 GITEE_API_BASE = "https://gitee.com/api/v5"
+LANGUAGE_COLORS = [
+    "#2563eb",
+    "#7c3aed",
+    "#f97316",
+    "#14b8a6",
+    "#ef4444",
+    "#0f766e",
+    "#eab308",
+    "#64748b",
+]
 
 
 def parse_gitee_repo_url(repo_url: str) -> tuple[str, str]:
@@ -79,6 +97,14 @@ def _commit_detail_url(binding: RepoBinding, commit_hash: str) -> str:
 
 def _commit_list_url(binding: RepoBinding) -> str:
     return f"{GITEE_API_BASE}/repos/{binding.repo_owner}/{binding.repo_name}/commits"
+
+
+def _archive_download_urls(binding: RepoBinding, branch: str) -> list[str]:
+    safe_branch = (branch or "").strip() or "master"
+    return [
+        f"https://gitee.com/{binding.repo_owner}/{binding.repo_name}/repository/archive/{safe_branch}.zip",
+        f"https://gitee.com/{binding.repo_owner}/{binding.repo_name}/repository/archive/{safe_branch}?format=zip",
+    ]
 
 
 def _browser_fetch_json(page, url: str):
@@ -414,6 +440,356 @@ def _split_aliases(value: str | None) -> list[str]:
         if item:
             result.append(item.lower())
     return result
+
+
+def _serialize_json(data: dict) -> str:
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _load_cached_analysis(binding: RepoBinding) -> dict | None:
+    raw = str(binding.analysis_summary_json or "").strip()
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def load_cached_repo_insight_snapshot(binding: RepoBinding | None) -> dict | None:
+    if binding is None:
+        return None
+    return _load_cached_analysis(binding)
+
+
+def repo_insight_needs_refresh(binding: RepoBinding | None, cached: dict | None = None) -> bool:
+    if binding is None:
+        return False
+    payload = cached if cached is not None else _load_cached_analysis(binding)
+    if not payload:
+        return True
+    generated_at = binding.analysis_generated_at
+    if generated_at is None:
+        return True
+    if binding.last_sync_at and binding.last_sync_at > generated_at:
+        return True
+    max_age_hours = max(1, int(get_settings().repo_analysis_max_age_hours or 12))
+    return (datetime.utcnow() - generated_at) >= timedelta(hours=max_age_hours)
+
+
+def _download_repo_archive(binding: RepoBinding) -> str:
+    branch_candidates: list[str] = []
+    for candidate in (binding.default_branch, "master", "main"):
+        name = str(candidate or "").strip()
+        if name and name not in branch_candidates:
+            branch_candidates.append(name)
+    errors: list[str] = []
+    headers = {
+        "Accept": "application/zip,application/octet-stream,*/*",
+        "User-Agent": "Mozilla/5.0",
+    }
+    for branch in branch_candidates:
+        for url in _archive_download_urls(binding, branch):
+            suffix = f"-{binding.repo_owner}-{binding.repo_name}-{branch}.zip"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                temp_path = tmp.name
+            try:
+                with httpx.Client(timeout=90.0, follow_redirects=True) as client:
+                    response = client.get(url, headers=headers)
+                    response.raise_for_status()
+                    Path(temp_path).write_bytes(response.content)
+                if Path(temp_path).stat().st_size <= 0:
+                    raise RuntimeError("empty archive")
+                return temp_path
+            except Exception as exc:
+                errors.append(f"{branch}:{exc}")
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+    raise HTTPException(status_code=502, detail=f"gitee archive download failed: {' | '.join(errors[:4])}")
+
+
+def _clone_repo_to_tempdir(binding: RepoBinding) -> str:
+    git_bin = shutil.which("git")
+    if not git_bin:
+        raise RuntimeError("git executable not found")
+    branch_candidates: list[str] = []
+    for candidate in (binding.default_branch, "master", "main"):
+        name = str(candidate or "").strip()
+        if name and name not in branch_candidates:
+            branch_candidates.append(name)
+    last_error = "unknown"
+    for branch in branch_candidates:
+        temp_root = tempfile.mkdtemp(prefix=f"gitee-repo-{binding.id}-")
+        repo_dir = str(Path(temp_root) / "repo")
+        try:
+            result = subprocess.run(
+                [git_bin, "clone", "--depth", "1", "--branch", branch, binding.repo_url, repo_dir],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=180,
+                check=False,
+            )
+            if result.returncode == 0 and Path(repo_dir).exists():
+                return repo_dir
+            last_error = (result.stderr or result.stdout or "").strip() or f"clone failed on branch {branch}"
+        finally:
+            if not Path(repo_dir).exists():
+                shutil.rmtree(temp_root, ignore_errors=True)
+    raise RuntimeError(last_error)
+
+
+def _analyze_code_directory(directory_path: str) -> dict:
+    result = {
+        "archive_format": "git_clone",
+        "total_files": 0,
+        "source_file_count": 0,
+        "total_lines": 0,
+        "total_bytes": 0,
+        "dominant_language": None,
+        "risk_level": "unknown",
+        "risk_flags": [],
+        "top_extensions": [],
+        "languages": {},
+    }
+    root = Path(directory_path)
+    ext_counter: dict[str, int] = {}
+    lang_counter: dict[str, int] = {}
+    for file_path in root.rglob("*"):
+        if not file_path.is_file():
+            continue
+        relative_name = file_path.relative_to(root).as_posix()
+        if _is_ignored(relative_name):
+            continue
+        result["total_files"] += 1
+        try:
+            file_size = int(file_path.stat().st_size or 0)
+        except Exception:
+            file_size = 0
+        result["total_bytes"] += file_size
+        ext = file_path.suffix.lower()
+        if ext:
+            ext_counter[ext] = ext_counter.get(ext, 0) + 1
+        if ext not in TEXT_EXTENSIONS:
+            continue
+        try:
+            raw = file_path.read_bytes()
+        except Exception:
+            continue
+        text = _safe_decode(raw)
+        if text is None:
+            continue
+        line_count = len(text.splitlines())
+        result["source_file_count"] += 1
+        result["total_lines"] += line_count
+        lang = TEXT_EXTENSIONS[ext]
+        lang_counter[lang] = lang_counter.get(lang, 0) + line_count
+
+    result["languages"] = lang_counter
+    result["top_extensions"] = [
+        {"extension": ext, "count": count}
+        for ext, count in sorted(ext_counter.items(), key=lambda item: item[1], reverse=True)[:8]
+    ]
+    if lang_counter:
+        result["dominant_language"] = max(lang_counter.items(), key=lambda item: item[1])[0]
+
+    risk_flags: list[str] = []
+    risk_level = "low"
+    if result["total_files"] == 0:
+        risk_flags.append("empty_repository")
+        risk_level = "high"
+    if result["source_file_count"] == 0:
+        risk_flags.append("no_detected_source_files")
+        risk_level = "high"
+    elif result["total_lines"] < 50:
+        risk_flags.append("very_small_codebase")
+        risk_level = "medium" if risk_level == "low" else risk_level
+    if result["total_files"] > 0 and result["source_file_count"] / max(result["total_files"], 1) < 0.2:
+        risk_flags.append("low_source_file_ratio")
+        risk_level = "medium" if risk_level == "low" else risk_level
+
+    result["risk_flags"] = risk_flags
+    result["risk_level"] = risk_level
+    return result
+
+
+def _build_member_profile_map(db: Session, submission: AssignmentSubmission) -> dict[str, dict]:
+    student_ids = [str(member.student_id or "").strip() for member in list(submission.members or []) if str(member.student_id or "").strip()]
+    if not student_ids:
+        return {}
+    users = db.query(User).filter(User.student_id.in_(student_ids)).all()
+    user_map = {str(user.student_id or "").strip(): user for user in users}
+    profiles = (
+        db.query(UserGiteeProfile)
+        .filter(UserGiteeProfile.student_id.in_(student_ids))
+        .all()
+    )
+    profile_map = {str(profile.student_id or "").strip(): profile for profile in profiles}
+    data: dict[str, dict] = {}
+    for student_id in student_ids:
+        user = user_map.get(student_id)
+        profile = profile_map.get(student_id)
+        data[student_id] = {
+            "user_id": int(user.id) if user else None,
+            "real_name": str(user.real_name or "").strip() if user else "",
+            "gitee_login": str(profile.gitee_login or "").strip() if profile else "",
+            "gitee_display_name": str(profile.gitee_display_name or "").strip() if profile else "",
+            "gitee_profile_url": str(profile.gitee_profile_url or "").strip() if profile else "",
+        }
+    return data
+
+
+def _build_repo_member_workloads(db: Session, binding: RepoBinding) -> list[dict]:
+    submission: AssignmentSubmission = binding.submission
+    profile_map = _build_member_profile_map(db, submission)
+    members = list(submission.members or [])
+    member_lookup: dict[int, dict] = {}
+    author_name_map: dict[str, int] = {}
+    author_email_map: dict[str, int] = {}
+    for member in members:
+        student_id = str(member.student_id or "").strip()
+        profile = profile_map.get(student_id, {})
+        aliases_name = _split_aliases(member.git_author_names)
+        aliases_email = _split_aliases(member.git_author_emails)
+        gitee_login = str(profile.get("gitee_login") or "").strip()
+        gitee_display_name = str(profile.get("gitee_display_name") or "").strip()
+        if gitee_login and gitee_login.lower() not in aliases_name:
+            aliases_name.append(gitee_login.lower())
+        if gitee_display_name and gitee_display_name.lower() not in aliases_name:
+            aliases_name.append(gitee_display_name.lower())
+        if not aliases_name:
+            aliases_name.append(str(member.student_name or "").strip().lower())
+        member_lookup[member.id] = {
+            "user_id": profile.get("user_id"),
+            "member_id": member.id,
+            "student_id": student_id,
+            "real_name": profile.get("real_name") or member.student_name,
+            "gitee_login": gitee_login,
+            "gitee_display_name": gitee_display_name or gitee_login,
+            "contribution_source": member.contribution_source or "mixed",
+            "commit_count": 0,
+            "additions": 0,
+            "deletions": 0,
+            "changed_files": 0,
+            "workload_value": 0,
+            "workload_percent": 0.0,
+        }
+        for alias in aliases_name:
+            author_name_map.setdefault(alias, member.id)
+        for alias in aliases_email:
+            author_email_map.setdefault(alias, member.id)
+
+    for commit in list(binding.commits or []):
+        author_name = str(commit.author_name or "").strip().lower()
+        author_email = str(commit.author_email or "").strip().lower()
+        member_id = author_email_map.get(author_email) if author_email else None
+        if member_id is None and author_name:
+            member_id = author_name_map.get(author_name)
+        if member_id is None or member_id not in member_lookup:
+            continue
+        item = member_lookup[member_id]
+        item["commit_count"] += 1
+        item["additions"] += int(commit.additions or 0)
+        item["deletions"] += int(commit.deletions or 0)
+        item["changed_files"] += int(commit.changed_files or 0)
+
+    total_workload = 0
+    for item in member_lookup.values():
+        churn = int(item["additions"] or 0) + int(item["deletions"] or 0)
+        if churn <= 0:
+            churn = (int(item["changed_files"] or 0) * 20) + (int(item["commit_count"] or 0) * 10)
+        item["workload_value"] = churn
+        total_workload += churn
+    for item in member_lookup.values():
+        item["workload_percent"] = round((float(item["workload_value"]) / max(total_workload, 1)) * 100, 1) if total_workload > 0 else 0.0
+    return sorted(
+        member_lookup.values(),
+        key=lambda row: (-float(row["workload_percent"]), -int(row["workload_value"]), row["student_id"]),
+    )
+
+
+def _build_language_rows(summary: dict) -> list[dict]:
+    languages = summary.get("languages") or {}
+    if not isinstance(languages, dict):
+        languages = {}
+    total_lines = int(summary.get("total_lines") or 0)
+    rows: list[dict] = []
+    for index, (language, lines) in enumerate(sorted(languages.items(), key=lambda item: item[1], reverse=True)):
+        line_count = int(lines or 0)
+        rows.append(
+            {
+                "language": str(language or "Unknown"),
+                "lines": line_count,
+                "percent": round((line_count / max(total_lines, 1)) * 100, 1) if total_lines > 0 else 0.0,
+                "color": LANGUAGE_COLORS[index % len(LANGUAGE_COLORS)],
+            }
+        )
+    return rows
+
+
+def build_repo_insight_snapshot(db: Session, binding: RepoBinding, *, refresh: bool = False) -> dict:
+    if not refresh:
+        cached = _load_cached_analysis(binding)
+        if cached:
+            return cached
+
+    cleanup_path = None
+    try:
+        repo_dir = _clone_repo_to_tempdir(binding)
+        cleanup_path = str(Path(repo_dir).parent)
+        code_summary = _analyze_code_directory(repo_dir)
+    except Exception:
+        archive_path = _download_repo_archive(binding)
+        cleanup_path = archive_path
+        code_summary = analyze_code_archive(archive_path)
+    finally:
+        try:
+            if cleanup_path:
+                path_obj = Path(cleanup_path)
+                if path_obj.is_dir():
+                    shutil.rmtree(path_obj, ignore_errors=True)
+                else:
+                    path_obj.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    code_payload = {
+        "archive_format": str(code_summary.get("archive_format") or "zip"),
+        "total_files": int(code_summary.get("total_files") or 0),
+        "source_file_count": int(code_summary.get("source_file_count") or 0),
+        "total_lines": int(code_summary.get("total_lines") or 0),
+        "total_bytes": int(code_summary.get("total_bytes") or 0),
+        "estimated_kb": round(int(code_summary.get("total_bytes") or 0) / 1024, 1),
+        "dominant_language": code_summary.get("dominant_language"),
+        "risk_level": str(code_summary.get("risk_level") or "unknown"),
+        "risk_flags": list(code_summary.get("risk_flags") or []),
+        "languages": _build_language_rows(code_summary),
+    }
+    members = _build_repo_member_workloads(db, binding)
+    risk_flags = list(code_payload["risk_flags"])
+    if any(not str(item.get("gitee_login") or "").strip() for item in members):
+        risk_flags.append("members_without_gitee_profile")
+    if all(float(item.get("workload_percent") or 0) == 0 for item in members) and members:
+        risk_flags.append("no_mapped_member_workload")
+    payload = {
+        "binding_id": binding.id,
+        "repo_url": binding.repo_url,
+        "sync_status": binding.sync_status,
+        "last_sync_at": binding.last_sync_at.isoformat() if binding.last_sync_at else None,
+        "analysis_generated_at": datetime.utcnow().isoformat(),
+        "code_summary": code_payload,
+        "members": members,
+        "risk_flags": sorted(set(risk_flags)),
+    }
+    binding.analysis_summary_json = _serialize_json(payload)
+    binding.analysis_generated_at = datetime.utcnow()
+    db.add(binding)
+    db.commit()
+    db.refresh(binding)
+    return payload
 
 
 def build_member_commit_histories(binding: RepoBinding) -> dict:

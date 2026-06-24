@@ -13,6 +13,7 @@ class WorkloadMemberSummary(BaseModel):
     student_name: str
     student_id: str
     project_role: str | None = None
+    personal_statement: str = ""
     contribution_source: str
     workload_index: int
     rank_order: int

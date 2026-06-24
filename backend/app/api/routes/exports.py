@@ -120,7 +120,7 @@ def export_teacher_scores(
         assigned_teacher_ids = [int(item.teacher_user_id) for item in assignees]
         assigned_teacher_id_set = set(assigned_teacher_ids)
 
-        aggregate = build_teacher_score_aggregate(records)
+        aggregate = build_teacher_score_aggregate(records, submission)
         aggregate.assigned_teacher_count = len(assigned_teacher_id_set)
 
         summary_rows.append(
@@ -138,11 +138,12 @@ def export_teacher_scores(
                 "assigned_teacher_count": aggregate.assigned_teacher_count,
                 "score_count": aggregate.score_count,
                 "average_total_score": aggregate.average_total_score,
-                "average_innovation_score": aggregate.average_innovation_score,
-                "average_completeness_score": aggregate.average_completeness_score,
-                "average_code_quality_score": aggregate.average_code_quality_score,
-                "average_demo_score": aggregate.average_demo_score,
-                "average_contribution_score": aggregate.average_contribution_score,
+                "average_group_total_score": aggregate.average_group_total_score,
+                "average_project_display_score": aggregate.average_project_display_score,
+                "average_project_innovation_score": aggregate.average_project_innovation_score,
+                "average_key_highlight_score": aggregate.average_key_highlight_score,
+                "average_member_personal_score": aggregate.average_member_personal_score,
+                "average_five_scale_score": aggregate.average_five_scale_score,
                 "updated_at": submission.updated_at,
             }
         )
@@ -167,11 +168,11 @@ def export_teacher_scores(
                         "teacher_role": str(teacher_role or ""),
                         "assigned": True,
                         "scored": record is not None,
-                        "innovation_score": getattr(record, "innovation_score", None) if record else None,
-                        "completeness_score": getattr(record, "completeness_score", None) if record else None,
-                        "code_quality_score": getattr(record, "code_quality_score", None) if record else None,
-                        "demo_score": getattr(record, "demo_score", None) if record else None,
-                        "contribution_score": getattr(record, "contribution_score", None) if record else None,
+                        "project_display_score": getattr(record, "project_display_score", None) if record else None,
+                        "project_innovation_score": getattr(record, "project_innovation_score", None) if record else None,
+                        "key_highlight_score": getattr(record, "key_highlight_score", None) if record else None,
+                        "group_total_score": getattr(record, "group_total_score", None) if record else None,
+                        "member_scores_json": getattr(record, "member_scores_json", None) if record else None,
                         "total_score": getattr(record, "total_score", None) if record else None,
                         "comment": getattr(record, "comment", None) if record else None,
                         "updated_at": getattr(record, "updated_at", None) if record else None,
@@ -195,11 +196,11 @@ def export_teacher_scores(
                         "teacher_role": str(teacher_role or ""),
                         "assigned": True,
                         "scored": True,
-                        "innovation_score": record.innovation_score,
-                        "completeness_score": record.completeness_score,
-                        "code_quality_score": record.code_quality_score,
-                        "demo_score": record.demo_score,
-                        "contribution_score": record.contribution_score,
+                        "project_display_score": record.project_display_score,
+                        "project_innovation_score": record.project_innovation_score,
+                        "key_highlight_score": record.key_highlight_score,
+                        "group_total_score": record.group_total_score,
+                        "member_scores_json": record.member_scores_json,
                         "total_score": record.total_score,
                         "comment": record.comment,
                         "updated_at": record.updated_at,

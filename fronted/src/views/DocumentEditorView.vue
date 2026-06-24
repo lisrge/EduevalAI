@@ -1,18 +1,19 @@
 <template>
-  <div class="edueval-skin flex flex-col" style="min-height: 100vh;">
+  <div class="edueval-skin edueval-page">
     <ChatHeader />
 
-    <div style="padding: 20px; flex: 1; min-height: 0; display: flex; justify-content: center;">
-      <section class="panel" style="width: 980px; max-width: 100%; min-height: 0; display: flex; flex-direction: column;">
+    <div class="page-wrapper" style="flex: 1; min-height: 0; display: flex; justify-content: center;">
+      <section class="panel editor-shell">
         <div class="panel-header" style="margin-bottom: 10px;">
           <div style="min-width: 0;">
+            <p class="hero-eyebrow" style="margin-bottom: 6px;">Document Editor</p>
             <h2 style="margin: 0; word-break: break-word;">{{ pageTitle }}</h2>
             <p class="panel-subtitle" style="margin-top: 6px;">
               {{ saveHint }}
             </p>
           </div>
 
-          <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+          <div class="page-actions" style="justify-content: flex-end;">
             <button class="ghost-button" type="button" style="width: auto;" @click="goBack">返回</button>
             <button class="ghost-button" type="button" style="width: auto;" :disabled="busy" @click="downloadDocx">下载 DOCX</button>
             <button class="primary-button" type="button" :disabled="busy" @click="uploadNow">上传</button>
@@ -775,3 +776,19 @@ onBeforeUnmount(() => {
   }
 });
 </script>
+
+<style scoped>
+.editor-shell {
+  width: min(1080px, 100%);
+  max-width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 760px) {
+  .editor-shell {
+    border-radius: 18px;
+  }
+}
+</style>

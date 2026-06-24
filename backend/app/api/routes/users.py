@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
 from sqlalchemy import func
@@ -18,6 +18,7 @@ from app.models.blog import BlogCrawlRun, BlogPost
 from app.models.document_draft import ApplicationDraft, TaskDraft
 from app.models.group import UserGroup
 from app.models.request import UserChangeRequest
+from app.models.submission import AssignmentSubmission
 from app.models.user import TeacherScore, User
 from app.schemas.document_draft import DraftDetail, DraftSummary
 from app.schemas.application import AdminUserChangeRequestItem, UserChangeRequestItem
@@ -53,7 +54,12 @@ from app.schemas.user_profile import (
     TeacherStudentDetail,
     TeacherStudentListItem,
 )
-from app.services.auth_service import change_password, get_user_by_token
+from app.services.auth_service import (
+    change_password,
+    get_user_by_token,
+    save_signature_for_user,
+    user_has_real_signature,
+)
 from app.services.blog_crawl_job_service import queue_user_blog_crawls
 from app.services.blog_crawler_service import (
     build_blog_user_risk,
@@ -69,6 +75,7 @@ from app.services.document_draft_service import (
     render_task_docx,
     render_task_markdown,
 )
+from app.services.live_event_service import publish_live_event
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -132,6 +139,8 @@ def _build_blog_run_item(row: BlogCrawlRun) -> BlogCrawlRunItem:
 def _build_user_request_item(row: UserChangeRequest) -> UserChangeRequestItem:
     return UserChangeRequestItem(
         id=row.id,
+        group_id=getattr(row, "group_id", None),
+        assignment_id=getattr(row, "assignment_id", None),
         request_type=row.request_type,
         status=row.status,
         request_note=row.request_note or "",
@@ -148,6 +157,8 @@ def _build_admin_user_request_item(row: UserChangeRequest, student_id: str) -> A
     return AdminUserChangeRequestItem(
         id=row.id,
         user_id=row.user_id,
+        group_id=getattr(row, "group_id", None),
+        assignment_id=getattr(row, "assignment_id", None),
         student_id=student_id,
         request_type=row.request_type,
         status=row.status,
@@ -317,6 +328,7 @@ def _content_disposition_attachment(filename: str) -> str:
 @router.get("/me/profile", response_model=ProfileResponse)
 def me_profile(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     user = _current_user(authorization, db)
+    has_signature = user_has_real_signature(user)
     pending_reupload_request = (
         db.query(UserChangeRequest)
         .filter(
@@ -341,8 +353,9 @@ def me_profile(authorization: str | None = Header(default=None), db: Session = D
         student_id=user.student_id,
         real_name=user.real_name or "",
         created_at=user.created_at,
-        signature_file_name=user.signature_file_name,
-        signature_url="/api/users/me/signature",
+        signature_file_name=user.signature_file_name if has_signature else "",
+        signature_url="/api/users/me/signature" if has_signature else "",
+        has_signature=has_signature,
         application_reupload_allowed=bool(user.application_reupload_allowed),
         pending_reupload_request=pending_reupload_request,
         pending_signature_request=pending_signature_request,
@@ -352,10 +365,25 @@ def me_profile(authorization: str | None = Header(default=None), db: Session = D
 @router.get("/me/signature")
 def me_signature(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     user = _current_user(authorization, db)
+    if not user_has_real_signature(user):
+        raise HTTPException(status_code=404, detail="signature not found")
     path = Path(user.signature_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="signature not found")
     return FileResponse(path=path, filename=user.signature_file_name, headers={"Content-Disposition": "inline"})
+
+
+@router.post("/me/signature", response_model=ProfileResponse)
+async def me_upload_signature(
+    signature: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(authorization, db)
+    if user_has_real_signature(user):
+        raise HTTPException(status_code=409, detail="signature already exists; please submit an update request")
+    await save_signature_for_user(db, user, signature)
+    return me_profile(authorization=authorization, db=db)
 
 
 @router.post("/me/password", response_model=ChangePasswordResponse)
@@ -1015,12 +1043,56 @@ def admin_review_user_request(
 
     if status == "approved":
         if row.request_type == "application_reupload":
-            user.application_reupload_allowed = True
+            group_id = int(getattr(row, "group_id", None) or getattr(user, "group_id", None) or 0)
+            if group_id > 0:
+                apps = db.query(ApplicationRecord).filter(ApplicationRecord.group_id == group_id).all()
+                for record in apps:
+                    file_path = Path(str(record.file_path or ""))
+                    db.delete(record)
+                    db.commit()
+                    if file_path.exists():
+                        try:
+                            file_path.unlink()
+                        except OSError:
+                            pass
+                publish_live_event("application_reupload_approved", {
+                    "request_id": row.id,
+                    "group_id": group_id,
+                    "user_id": user.id,
+                    "status": "approved",
+                })
         elif row.request_type == "signature_update":
             if not row.file_path:
                 raise HTTPException(status_code=400, detail="signature file missing")
             user.signature_file_name = row.file_name or user.signature_file_name
             user.signature_path = row.file_path
+        elif row.request_type == "homework_resubmit":
+            group_id = int(getattr(row, "group_id", None) or getattr(user, "group_id", None) or 0)
+            assignment_id = int(getattr(row, "assignment_id", None) or 0)
+            if group_id > 0 and assignment_id > 0:
+                submission = (
+                    db.query(AssignmentSubmission)
+                    .filter(AssignmentSubmission.assignment_id == assignment_id, AssignmentSubmission.group_id == group_id)
+                    .first()
+                )
+                if submission:
+                    file_paths = [Path(str(item.file_path or "")) for item in (submission.assets or []) if str(item.file_path or "").strip()]
+                    db.delete(submission)
+                    db.commit()
+                    for path in file_paths:
+                        if not path.exists():
+                            continue
+                        try:
+                            path.unlink()
+                        except OSError:
+                            pass
+                publish_live_event("homework_resubmit_approved", {
+                    "request_id": row.id,
+                    "group_id": group_id,
+                    "assignment_id": assignment_id,
+                    "user_id": user.id,
+                    "status": "approved",
+                })
 
     db.commit()
     db.refresh(row)

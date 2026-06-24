@@ -26,7 +26,7 @@
         v-model="searchText"
         class="search-input"
         type="text"
-        :placeholder="allowScoring ? '搜索学生姓名、学号、项目名' : '搜索我的申请书'"
+        :placeholder="allowScoring ? '搜索学生姓名、学号、项目名' : '搜索本组申请书'"
       />
 
       <div class="pill-row">
@@ -102,7 +102,14 @@
                 >
                   {{ item.scoreStatus === 'scoring' ? '评分中...' : '评分' }}
                 </button>
-                <span v-else class="empty-inline">查看右侧详情</span>
+                <div v-else class="student-action-row">
+                  <button class="table-button" @click.stop="$emit('select', item.localId)">
+                    查看详情
+                  </button>
+                  <button class="table-button" :disabled="!canPreviewItem(item)" @click.stop="$emit('preview', item.localId)">
+                    预览申请书
+                  </button>
+                </div>
               </td>
             </tr>
             <tr v-if="filteredItems.length === 0">
@@ -250,6 +257,11 @@ function previewSelected() {
   if (localId) emit('preview', localId);
 }
 
+function canPreviewItem(item) {
+  const application = item?.detail?.application || item?.application || null;
+  return Boolean(application?.preview_url || application?.file_download_url);
+}
+
 function resolvedScore(item) {
   return item?.detail?.score || item?.score || null;
 }
@@ -287,3 +299,11 @@ function uploadBadge(status) {
   return 'neutral';
 }
 </script>
+
+<style scoped>
+.student-action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+</style>
