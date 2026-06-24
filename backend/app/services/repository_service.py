@@ -240,6 +240,81 @@ def _fetch_graph_payload(binding: RepoBinding, branch: str) -> tuple[dict, str]:
     raise HTTPException(status_code=502, detail=f"gitee graph fetch failed: {' | '.join(errors[:6])}")
 
 
+def _fetch_commits_via_api(binding: RepoBinding, max_pages: int = 3, per_page: int = 50) -> tuple[list[dict], str]:
+    errors: list[str] = []
+    normalized_per_page = max(1, min(int(per_page or 50), 100))
+    normalized_pages = max(1, int(max_pages or 1))
+    for candidate in _candidate_branches(binding):
+        all_items: list[dict] = []
+        try:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                for page in range(1, normalized_pages + 1):
+                    response = client.get(
+                        _commit_list_url(binding),
+                        params={
+                            "sha": candidate,
+                            "per_page": normalized_per_page,
+                            "page": page,
+                        },
+                        headers={
+                            "Accept": "application/json,text/plain,*/*",
+                            "User-Agent": "Mozilla/5.0",
+                        },
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not isinstance(payload, list):
+                        raise ValueError("invalid commits payload")
+                    if not payload:
+                        break
+                    all_items.extend(payload)
+                    if len(payload) < normalized_per_page:
+                        break
+            if all_items:
+                return all_items, candidate
+            errors.append(f"{candidate}:empty")
+        except Exception as exc:
+            errors.append(f"{candidate}:{exc}")
+    raise HTTPException(status_code=502, detail=f"gitee commits api failed: {' | '.join(errors[:6])}")
+
+
+def _extract_commit_hash(item: dict) -> str:
+    return str(item.get("id") or item.get("sha") or "").strip()
+
+
+def _extract_author_info(item: dict) -> dict:
+    author_info = item.get("author") or {}
+    if isinstance(author_info, dict) and author_info:
+        return author_info
+    commit_info = item.get("commit") or {}
+    author_info = commit_info.get("author") or {}
+    return author_info if isinstance(author_info, dict) else {}
+
+
+def _extract_committed_at(item: dict) -> datetime | None:
+    raw = item.get("date")
+    if not raw:
+        raw = ((item.get("commit") or {}).get("author") or {}).get("date")
+    if not raw:
+        return None
+    return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).replace(tzinfo=None)
+
+
+def _extract_message(item: dict) -> str | None:
+    message = item.get("message")
+    if not message:
+        message = ((item.get("commit") or {}).get("message") or "").strip()
+    value = str(message or "").strip()
+    return value or None
+
+
+def _extract_html_url(binding: RepoBinding, commit_hash: str, item: dict) -> str:
+    html_url = str(item.get("html_url") or "").strip()
+    if html_url:
+        return html_url
+    return f"https://gitee.com/{binding.repo_owner}/{binding.repo_name}/commit/{commit_hash}"
+
+
 def _extract_commit_stats(item: dict) -> tuple[int, int, int]:
     additions = item.get("additions")
     deletions = item.get("deletions")
@@ -267,21 +342,24 @@ def sync_gitee_repo(db: Session, binding: RepoBinding, max_pages: int = 3, per_p
     }
 
     try:
+        commits, resolved_branch = _fetch_commits_via_api(binding, max_pages=max_pages, per_page=per_page)
+    except HTTPException:
         payload, resolved_branch = _fetch_graph_payload(binding, (binding.default_branch or "").strip() or "master")
         commits = list(payload.get("commits") or [])
         if max_pages > 0 and per_page > 0:
             commits = commits[: max_pages * per_page]
 
+    try:
+
         for item in commits:
-            commit_hash = str(item.get("id") or "").strip()
+            commit_hash = _extract_commit_hash(item)
             if not commit_hash or commit_hash in existing_hashes:
                 continue
 
-            author_info = item.get("author") or {}
-            committed_at_raw = item.get("date")
-            if not committed_at_raw:
+            author_info = _extract_author_info(item)
+            committed_at = _extract_committed_at(item)
+            if not committed_at:
                 continue
-            committed_at = datetime.fromisoformat(str(committed_at_raw).replace("Z", "+00:00")).replace(tzinfo=None)
             additions, deletions, changed_files = _extract_commit_stats(item)
 
             db.add(
@@ -290,9 +368,9 @@ def sync_gitee_repo(db: Session, binding: RepoBinding, max_pages: int = 3, per_p
                     commit_hash=commit_hash,
                     author_name=author_info.get("name"),
                     author_email=author_info.get("email"),
-                    message=(item.get("message") or "").strip() or None,
+                    message=_extract_message(item),
                     committed_at=committed_at,
-                    html_url=f"https://gitee.com/{binding.repo_owner}/{binding.repo_name}/commit/{commit_hash}",
+                    html_url=_extract_html_url(binding, commit_hash, item),
                     additions=additions,
                     deletions=deletions,
                     changed_files=changed_files,
